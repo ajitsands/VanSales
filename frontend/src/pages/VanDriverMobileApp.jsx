@@ -241,7 +241,8 @@ export default function VanDriverMobileApp() {
           const okMsg = `Arrived & checked in at ${shop.shop_name} (${res?.distance_m ?? 0}m away)! Billing unlocked.`;
           setMsg(okMsg);
           showToast('success', okMsg);
-          setSelectedShop(shop);
+          setSelectedShop({ ...shop, checked_in_today: 1 });
+          setShops(prev => prev.map(x => x.id === shop.id ? { ...x, checked_in_today: 1 } : x));
           load();
         } catch (e) {
           setMsg('');
