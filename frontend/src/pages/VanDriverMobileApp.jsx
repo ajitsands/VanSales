@@ -248,16 +248,22 @@ export default function VanDriverMobileApp() {
   // Live GPS tracking for automatic shop arrival check-in & moving-away lock
   useEffect(() => {
     if (!window.isSecureContext || !navigator.geolocation) return undefined;
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        setDriverCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-      },
-      () => {
-        // ignore passive GPS errors; manual Check-In handles explicit feedback
-      },
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
-    );
-    return () => navigator.geolocation.clearWatch(watchId);
+    const onPos = (pos) => {
+      setDriverCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+    };
+    const onErr = () => {
+      // ignore passive GPS errors; manual Check-In handles explicit feedback
+    };
+    const opts = { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 };
+    navigator.geolocation.getCurrentPosition(onPos, onErr, opts);
+    const watchId = navigator.geolocation.watchPosition(onPos, onErr, opts);
+    const pollGps = setInterval(() => {
+      navigator.geolocation.getCurrentPosition(onPos, onErr, opts);
+    }, 15000);
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+      clearInterval(pollGps);
+    };
   }, []);
 
   const maxGeofenceM = Number(vendor?.geofence_radius_m || 250);
@@ -354,6 +360,7 @@ export default function VanDriverMobileApp() {
     showToast('success', verifyingMsg);
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
+        setDriverCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         try {
           const res = await api.post(`/api/shops/${shop.id}/checkin`, {
             latitude: pos.coords.latitude,
