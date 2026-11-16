@@ -1,6 +1,12 @@
+Options -Indexes
+DirectoryIndex frontend/dist/index.html
+
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+  # Block direct access to sensitive folders/files
+  RewriteRule ^(\.git|database|backend/config|backend/\.env|\.env) - [F,L]
 
   # Route API requests to backend/public/index.php
   RewriteRule ^api(/.*)?$ backend/public/index.php [QSA,L]
@@ -11,9 +17,11 @@
   # Serve built frontend assets from frontend/dist
   RewriteRule ^assets/(.*)$ frontend/dist/assets/$1 [L]
 
-  # Serve existing files/directories directly
-  RewriteCond %{REQUEST_FILENAME} -f [OR]
-  RewriteCond %{REQUEST_FILENAME} -d
+  # Root URL -> built React index.html
+  RewriteRule ^$ frontend/dist/index.html [L]
+
+  # Serve existing files directly (e.g. favicon, static files)
+  RewriteCond %{REQUEST_FILENAME} -f
   RewriteRule ^ - [L]
 
   # Fallback all SPA routes to frontend/dist/index.html
