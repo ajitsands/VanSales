@@ -114,6 +114,7 @@ $router->add('DELETE', '/api/requests/{id}', [TransferController::class, 'delete
 $router->add('POST', '/api/transfers/store-to-van', [TransferController::class, 'dispatchStoreToVan'], [$auth, AuthMiddleware::requirePermission('transfers')]);
 $router->add('POST', '/api/transfers/van-to-van', [TransferController::class, 'createVanToVan'], $vendorUsers);
 $router->add('POST', '/api/transfers/{id}/confirm', [TransferController::class, 'confirmTransfer'], $vendorUsers);
+$router->add('POST', '/api/transfers/{id}/cancel', [TransferController::class, 'cancelTransfer'], $vendorUsers);
 $router->add('GET', '/api/transfers', [TransferController::class, 'listTransfers'], $vendorUsers);
 
 $router->add('GET', '/api/returns-damages', [TransferController::class, 'listReturnsDamages'], $vendorUsers);

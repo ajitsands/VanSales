@@ -508,6 +508,81 @@ class TransferController
         }
     }
 
+    public function cancelTransfer(Request $req): void
+    {
+        $vendorId = (int)$req->user['vendor_id'];
+        $id = (int)($req->params['id'] ?? 0);
+        $pdo = Database::getConnection();
+
+        $stmt = $pdo->prepare("SELECT * FROM stock_transfers WHERE id = ? AND vendor_id = ? LIMIT 1");
+        $stmt->execute([$id, $vendorId]);
+        $trf = $stmt->fetch();
+
+        if (!$trf || $trf['status'] !== 'pending_confirm') {
+            Response::error('Only pending transfers can be cancelled', 404);
+        }
+
+        if ($req->user['role'] === 'van') {
+            $myVanId = (int)$req->user['van_id'];
+            if ($myVanId !== (int)($trf['from_van_id'] ?? 0) && $myVanId !== (int)($trf['to_van_id'] ?? 0)) {
+                Response::error('You do not have permission to cancel this transfer', 403);
+            }
+        }
+
+        // Ensure 'cancelled' is supported in stock_transfers.status
+        $colInfo = $pdo->query("SHOW COLUMNS FROM stock_transfers LIKE 'status'")->fetch();
+        if ($colInfo && stripos((string)$colInfo['Type'], 'cancelled') === false) {
+            $pdo->exec("ALTER TABLE stock_transfers MODIFY COLUMN status VARCHAR(30) NOT NULL DEFAULT 'pending_confirm'");
+        }
+
+        try {
+            $pdo->beginTransaction();
+
+            $lStmt = $pdo->prepare("SELECT * FROM stock_transfer_lines WHERE transfer_id = ?");
+            $lStmt->execute([$id]);
+            $srcLoc = $trf['from_location_type'] === 'van' ? 'van' : 'main_store';
+            $srcVanId = $trf['from_van_id'] ? (int)$trf['from_van_id'] : null;
+
+            $restoreBatchStmt = $pdo->prepare("UPDATE stock_batches SET qty_available = qty_available + ? WHERE id = ? AND vendor_id = ?");
+            foreach ($lStmt->fetchAll() as $ln) {
+                $restored = false;
+                if (!empty($ln['source_batch_id'])) {
+                    $restoreBatchStmt->execute([(float)$ln['qty'], (int)$ln['source_batch_id'], $vendorId]);
+                    $restored = $restoreBatchStmt->rowCount() > 0;
+                }
+                if (!$restored) {
+                    InventoryModel::addBatch(
+                        $pdo,
+                        $vendorId,
+                        $srcLoc,
+                        $srcVanId,
+                        (int)$ln['item_id'],
+                        null,
+                        $ln['batch_no'],
+                        $ln['expiry_date'],
+                        (float)$ln['unit_cost'],
+                        (float)$ln['qty'],
+                        isset($ln['selling_price']) && $ln['selling_price'] !== null ? (float)$ln['selling_price'] : null
+                    );
+                }
+            }
+
+            $pdo->prepare("UPDATE stock_transfers SET status = 'cancelled' WHERE id = ?")->execute([$id]);
+
+            if (!empty($trf['request_id'])) {
+                self::syncRequestStatus($pdo, $vendorId, (int)$trf['request_id']);
+            }
+
+            $pdo->commit();
+            Response::ok(null, 'Transfer cancelled and stock restored');
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            Response::error('Cancel failed: ' . $e->getMessage(), 400);
+        }
+    }
+
     public function listTransfers(Request $req): void
     {
         $vendorId = (int)$req->user['vendor_id'];

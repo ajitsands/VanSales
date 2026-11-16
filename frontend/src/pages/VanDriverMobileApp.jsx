@@ -2244,8 +2244,8 @@ export default function VanDriverMobileApp() {
                                   <span className={`badge ${isSent ? 'badge-amber' : 'badge-emerald'}`} style={{ fontSize: 10 }}>
                                     {isSent ? `Sent → ${t.to_van_name}` : `Received ← ${t.from_van_name}`}
                                   </span>
-                                  <span className={`badge ${t.status === 'completed' ? 'badge-emerald' : 'badge-blue'}`} style={{ fontSize: 10 }}>
-                                    {t.status === 'completed' ? 'Completed' : `Pending (OTP ${t.otp_code})`}
+                                  <span className={`badge ${t.status === 'completed' ? 'badge-emerald' : t.status === 'cancelled' ? 'badge-rose' : 'badge-blue'}`} style={{ fontSize: 10 }}>
+                                    {t.status === 'completed' ? 'Completed' : t.status === 'cancelled' ? 'Cancelled' : `Pending (OTP ${t.otp_code})`}
                                   </span>
                                 </div>
                               </div>
@@ -2259,6 +2259,26 @@ export default function VanDriverMobileApp() {
                                   </div>
                                 ))}
                               </div>
+                              {t.status === 'pending_confirm' && (
+                                <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-rose btn-sm"
+                                    onClick={async () => {
+                                      setErr(''); setMsg('');
+                                      try {
+                                        await api.post(`/api/transfers/${t.id}/cancel`, {});
+                                        setMsg(`Transfer ${t.transfer_no} cancelled & stock restored to Van!`);
+                                        load();
+                                      } catch (e2) {
+                                        setErr(e2.message);
+                                      }
+                                    }}
+                                  >
+                                    Cancel Transfer (Restore Stock)
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           );
                         })}
