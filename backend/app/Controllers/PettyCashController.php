@@ -126,9 +126,45 @@ class PettyCashController
             $shiftId = $shStmt->fetchColumn() ?: null;
         }
 
+        $savedAttachments = [];
+        $rawAttachments = is_array($b['attachments'] ?? null) ? $b['attachments'] : [];
+        if (!empty($rawAttachments)) {
+            $uploadDir = __DIR__ . '/../../public/uploads/petty_cash';
+            if (!is_dir($uploadDir)) {
+                @mkdir($uploadDir, 0775, true);
+            }
+            foreach ($rawAttachments as $att) {
+                $b64 = (string)($att['data_base64'] ?? '');
+                if ($b64 === '') {
+                    continue;
+                }
+                if (preg_match('/^data:([^;]+);base64,(.+)$/', $b64, $m)) {
+                    $mime = $m[1];
+                    $raw = base64_decode($m[2], true);
+                } else {
+                    $mime = (string)($att['mime_type'] ?? 'image/jpeg');
+                    $raw = base64_decode($b64, true);
+                }
+                if ($raw === false || strlen($raw) === 0) {
+                    continue;
+                }
+                $ext = str_contains($mime, 'pdf') ? 'pdf' : (str_contains($mime, 'png') ? 'png' : 'jpg');
+                $fname = 'pc_' . $vendorId . '_' . date('YmdHis') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+                if (file_put_contents($uploadDir . '/' . $fname, $raw) !== false) {
+                    $savedAttachments[] = [
+                        'file_name' => $att['file_name'] ?? $fname,
+                        'mime_type' => $mime,
+                        'file_path' => '/uploads/petty_cash/' . $fname,
+                    ];
+                }
+            }
+        }
+        $primaryBillPath = $savedAttachments[0]['file_path'] ?? null;
+        $attachmentsJson = !empty($savedAttachments) ? json_encode($savedAttachments) : null;
+
         $stmt = $pdo->prepare("
-            INSERT INTO petty_cash_entries (vendor_id, source_type, van_id, shift_id, user_id, entry_type, category, amount, notes, entry_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO petty_cash_entries (vendor_id, source_type, van_id, shift_id, user_id, entry_type, category, amount, notes, entry_date, bill_attachment_path, attachments_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         $stmt->execute([
             $vendorId,
@@ -141,9 +177,14 @@ class PettyCashController
             $amount,
             $notes ?: null,
             $entryDate,
+            $primaryBillPath,
+            $attachmentsJson,
         ]);
 
-        Response::ok(['id' => (int)$pdo->lastInsertId()], ucfirst($entryType) . ' recorded in Petty Cash', 201);
+        Response::ok([
+            'id'                   => (int)$pdo->lastInsertId(),
+            'bill_attachment_path' => $primaryBillPath,
+        ], ucfirst($entryType) . ' recorded in Petty Cash', 201);
     }
 
     public function settleWallet(Request $req): void

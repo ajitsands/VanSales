@@ -27,6 +27,8 @@ class SchemaHelper
                 amount DECIMAL(12,3) NOT NULL,
                 notes VARCHAR(255) NULL,
                 entry_date DATE NOT NULL,
+                bill_attachment_path VARCHAR(255) NULL,
+                attachments_json LONGTEXT NULL,
                 closing_id BIGINT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_pc_vendor_src (vendor_id, source_type, entry_date),
@@ -65,6 +67,14 @@ class SchemaHelper
         }
         if (!in_array('included_shift_ids', $cols, true)) {
             $pdo->exec("ALTER TABLE closing_requests ADD COLUMN included_shift_ids VARCHAR(255) NULL AFTER keep_shortage_in_wallet");
+        }
+
+        $pcCols = $pdo->query("SHOW COLUMNS FROM petty_cash_entries")->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('bill_attachment_path', $pcCols, true)) {
+            $pdo->exec("ALTER TABLE petty_cash_entries ADD COLUMN bill_attachment_path VARCHAR(255) NULL AFTER entry_date");
+        }
+        if (!in_array('attachments_json', $pcCols, true)) {
+            $pdo->exec("ALTER TABLE petty_cash_entries ADD COLUMN attachments_json LONGTEXT NULL AFTER bill_attachment_path");
         }
     }
 }

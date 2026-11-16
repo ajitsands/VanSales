@@ -1,5 +1,5 @@
 import React from 'react';
-import { Paperclip, X, FileImage, FileText } from 'lucide-react';
+import { Paperclip, X, FileImage, FileText, Camera } from 'lucide-react';
 
 /**
  * Reusable multi-file attachment picker & previewer (Payment Screenshots, Cheque Photos, Bank Slips).
@@ -74,16 +74,28 @@ export default function AttachmentUploader({ attachments, setAttachments, label 
         <span style={{ fontSize: 11.5, fontWeight: 700, color: '#334155', display: 'flex', alignItems: 'center', gap: 5 }}>
           <Paperclip size={14} /> {label}
         </span>
-        <label className="btn btn-outline btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
-          + Add Photos / Files
-          <input
-            type="file"
-            multiple
-            accept="image/*,application/pdf"
-            onChange={handleFiles}
-            style={{ display: 'none' }}
-          />
-        </label>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <label className="btn btn-blue btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+            <Camera size={13} /> Take Photo
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handleFiles}
+              style={{ display: 'none' }}
+            />
+          </label>
+          <label className="btn btn-outline btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+            + Gallery / Files
+            <input
+              type="file"
+              multiple
+              accept="image/*,application/pdf"
+              onChange={handleFiles}
+              style={{ display: 'none' }}
+            />
+          </label>
+        </div>
       </div>
 
       {attachments.length > 0 && (

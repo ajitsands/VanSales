@@ -143,6 +143,7 @@ export default function VanDriverMobileApp() {
   const [keepShortageInWallet, setKeepShortageInWallet] = useState(false);
   const [pettyCashData, setPettyCashData] = useState({ entries: [], summary: { total_income: 0, total_expense: 0, net_petty: 0 }, wallet_balance: 0, wallet_entries: [] });
   const [pettyForm, setPettyForm] = useState({ entry_type: 'expense', category: 'Fuel', amount: '', notes: '' });
+  const [pettyAttachments, setPettyAttachments] = useState([]);
   const [savingPetty, setSavingPetty] = useState(false);
   const [walletSettleAmt, setWalletSettleAmt] = useState('');
   const [settlingWallet, setSettlingWallet] = useState(false);
@@ -603,9 +604,11 @@ export default function VanDriverMobileApp() {
         category: pettyForm.category,
         amount: Number(pettyForm.amount),
         notes: pettyForm.notes,
+        attachments: pettyAttachments,
       });
       setMsg(`${pettyForm.entry_type === 'income' ? 'Other Income' : 'Expense'} booked in Petty Cash!`);
       setPettyForm({ ...pettyForm, amount: '', notes: '' });
+      setPettyAttachments([]);
       load();
     } catch (e2) {
       setErr(e2.message);
@@ -2360,18 +2363,30 @@ export default function VanDriverMobileApp() {
                     />
                   </div>
                 </div>
+                <div style={{ marginBottom: 10 }}>
+                  <AttachmentUploader
+                    attachments={pettyAttachments}
+                    setAttachments={setPettyAttachments}
+                    label="Bill / Receipt Photo (Take Photo or Gallery)"
+                  />
+                </div>
                 <button type="submit" className="btn btn-blue btn-sm" style={{ width: '100%' }} disabled={savingPetty}>
                   {savingPetty ? 'Saving...' : `Book ${pettyForm.entry_type === 'income' ? 'Other Income' : 'Expense'}`}
                 </button>
                 {(pettyCashData.entries || []).length > 0 && (
                   <div style={{ marginTop: 10, maxHeight: 150, overflowY: 'auto', borderTop: '1px solid #e2e8f0', paddingTop: 6 }}>
                     {(pettyCashData.entries || []).slice(0, 10).map((pc) => (
-                      <div key={pc.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, padding: '4px 0', borderBottom: '1px solid #f1f5f9' }}>
-                        <span>
+                      <div key={pc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11.5, padding: '4px 0', borderBottom: '1px solid #f1f5f9', gap: 6 }}>
+                        <span style={{ flex: 1, minWidth: 0 }}>
                           <span className={`badge ${pc.entry_type === 'income' ? 'badge-emerald' : 'badge-rose'}`} style={{ fontSize: 9.5, marginRight: 5 }}>
                             {pc.entry_type === 'income' ? '+' : '-'} {pc.category}
                           </span>
                           {pc.notes || pc.entry_date}
+                          {pc.bill_attachment_path && (
+                            <a href={pc.bill_attachment_path} target="_blank" rel="noreferrer" className="badge badge-blue" style={{ marginLeft: 6, fontSize: 9.5, textDecoration: 'none' }}>
+                              View Bill
+                            </a>
+                          )}
                         </span>
                         <strong className="mono" style={{ color: pc.entry_type === 'income' ? '#059669' : '#be123c' }}>
                           {pc.entry_type === 'income' ? '+' : '-'}{formatMoney(pc.amount)}

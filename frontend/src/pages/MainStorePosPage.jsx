@@ -51,6 +51,7 @@ export default function MainStorePosPage() {
   const [storePettyOpen, setStorePettyOpen] = useState(false);
   const [storePettyData, setStorePettyData] = useState({ entries: [], summary: { total_income: 0, total_expense: 0, net_petty: 0 } });
   const [storePettyForm, setStorePettyForm] = useState({ entry_type: 'expense', category: 'Office / Store Expense', amount: '', notes: '' });
+  const [storePettyAttachments, setStorePettyAttachments] = useState([]);
   const [savingStorePetty, setSavingStorePetty] = useState(false);
 
   const loadStorePettyCash = async () => {
@@ -77,9 +78,11 @@ export default function MainStorePosPage() {
         category: storePettyForm.category,
         amount: Number(storePettyForm.amount),
         notes: storePettyForm.notes,
+        attachments: storePettyAttachments,
       });
       setMsg(`Store ${storePettyForm.entry_type === 'income' ? 'Other Income' : 'Expense'} recorded!`);
       setStorePettyForm({ ...storePettyForm, amount: '', notes: '' });
+      setStorePettyAttachments([]);
       loadStorePettyCash();
     } catch (e2) {
       setErr(e2.message);
@@ -1737,6 +1740,13 @@ export default function MainStorePosPage() {
               <button type="submit" className="btn btn-primary btn-sm" disabled={savingStorePetty}>
                 {savingStorePetty ? 'Saving...' : 'Book Entry'}
               </button>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <AttachmentUploader
+                  attachments={storePettyAttachments}
+                  setAttachments={setStorePettyAttachments}
+                  label="Bill / Receipt Photo (Take Photo or Gallery)"
+                />
+              </div>
             </form>
 
             <div style={{ overflowY: 'auto', marginTop: 10 }}>
@@ -1760,6 +1770,14 @@ export default function MainStorePosPage() {
                   { key: 'category', label: 'Category', sortValue: (p) => p.category || '' },
                   { key: 'amount', label: 'Amount', sortValue: (p) => Number(p.amount || 0), render: (p) => <span className="mono" style={{ fontWeight: 700 }}>{formatMoney(p.amount)}</span> },
                   { key: 'notes', label: 'Notes', sortValue: (p) => p.notes || '' },
+                  {
+                    key: 'bill_attachment_path',
+                    label: 'Bill',
+                    sortable: false,
+                    render: (p) => p.bill_attachment_path
+                      ? <a href={p.bill_attachment_path} target="_blank" rel="noreferrer" className="badge badge-blue" style={{ textDecoration: 'none' }}>View Bill</a>
+                      : <span style={{ color: '#94a3b8' }}>-</span>,
+                  },
                   { key: 'created_by_name', label: 'By', sortValue: (p) => p.created_by_name || '' },
                 ]}
               />
