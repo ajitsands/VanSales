@@ -298,7 +298,7 @@ export default function VanDriverMobileApp() {
     }
 
     // 2. Auto check-in & unlock billing when driver arrives within geofence of another shop
-    if (shift?.status !== 'open') return;
+    if (shiftData?.shift?.status !== 'open') return;
     const arrivedShop = shops.find((s) => {
       const d = getShopDistance(s);
       return d !== null && d <= maxGeofenceM;
@@ -321,7 +321,7 @@ export default function VanDriverMobileApp() {
     } else if (arrivedShop.checked_in_today && (!selectedShop || Number(selectedShop.id) !== Number(arrivedShop.id))) {
       setSelectedShop(arrivedShop);
     }
-  }, [driverCoords, shops, shift?.status]);
+  }, [driverCoords, shops, shiftData?.shift?.status]);
 
   const switchTab = (t) => {
     setActiveTab(t);

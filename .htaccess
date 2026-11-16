@@ -32,6 +32,7 @@ DirectoryIndex frontend/dist/index.html
   RewriteCond %{REQUEST_FILENAME} -f
   RewriteRule ^ - [L]
 
-  # Fallback all SPA routes to frontend/dist/index.html
+  # Fallback all SPA routes to frontend/dist/index.html (never rewrite missing /assets or /api)
+  RewriteCond %{REQUEST_URI} !^/(assets|api|uploads)/
   RewriteRule ^ frontend/dist/index.html [L]
 </IfModule>
