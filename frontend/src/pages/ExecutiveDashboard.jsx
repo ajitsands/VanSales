@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { usePersistedState } from '../hooks/usePersistedState';
 import DataTable from '../components/DataTable';
 import ConfirmModal from '../components/ConfirmModal';
+import { getVendorShifts } from '../utils/shiftTimings';
 import {
   TrendingUp, DollarSign, Truck, QrCode, CreditCard, Banknote,
   CheckCircle, XCircle, RefreshCw, Package, Clock, Landmark, FileCheck2, Calendar,
@@ -18,8 +19,9 @@ const localDateStr = (d = new Date()) => {
 };
 
 export default function ExecutiveDashboard() {
-  const { user, formatMoney, formatDateTime } = useAuth();
+  const { user, vendor, formatMoney, formatDateTime } = useAuth();
   const todayStr = localDateStr();
+  const [execTab, setExecTab] = usePersistedState('exec_active_tab', 'overview');
   const [fromDate, setFromDate] = usePersistedState('exec_from_date', todayStr);
   const [toDate, setToDate] = usePersistedState('exec_to_date', todayStr);
   const [data, setData] = useState(null);
@@ -31,6 +33,75 @@ export default function ExecutiveDashboard() {
   const [drillInvoice, setDrillInvoice] = useState(null);
   const [drillLoading, setDrillLoading] = useState(false);
   const [alertMessage, setAlertMessage] = useState('');
+
+  // Van Daily Sales Report states (Date + Time + Shift + Van)
+  const [reportFromDate, setReportFromDate] = usePersistedState('van_rep_from_date', todayStr);
+  const [reportFromTime, setReportFromTime] = usePersistedState('van_rep_from_time', '00:00');
+  const [reportToDate, setReportToDate] = usePersistedState('van_rep_to_date', todayStr);
+  const [reportToTime, setReportToTime] = usePersistedState('van_rep_to_time', '23:59');
+  const [reportVanId, setReportVanId] = usePersistedState('van_rep_van_id', '');
+  const [reportShift, setReportShift] = usePersistedState('van_rep_shift', 'all_day');
+  const [vanReport, setVanReport] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportShopModal, setReportShopModal] = useState(null);
+  const [reportExpandedInvId, setReportExpandedInvId] = useState(null);
+
+  const vendorShifts = getVendorShifts(vendor);
+
+  const loadVanReport = async (
+    fDate = reportFromDate,
+    fTime = reportFromTime,
+    tDate = reportToDate,
+    tTime = reportToTime,
+    vId = reportVanId,
+  ) => {
+    setReportLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      if (fDate) qs.set('from_date', fDate);
+      if (tDate) qs.set('to_date', tDate);
+      if (fTime) qs.set('from_time', fTime);
+      if (tTime) qs.set('to_time', tTime);
+      if (vId) qs.set('van_id', vId);
+      const res = await api.get(`/api/dashboard/van-sales-report?${qs.toString()}`);
+      setVanReport(res);
+    } catch (e) {
+      setAlertMessage(e.message);
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  const applyReportShift = (shiftKey) => {
+    setReportShift(shiftKey);
+    if (shiftKey === 'all_day') {
+      setReportFromTime('00:00');
+      setReportToTime('23:59');
+      setReportToDate(reportFromDate);
+      loadVanReport(reportFromDate, '00:00', reportFromDate, '23:59', reportVanId);
+      return;
+    }
+    const found = vendorShifts.find((s) => s.name === shiftKey);
+    if (!found) return;
+    const fTime = found.from || '00:00';
+    const tTime = found.to || '23:59';
+    let tDate = reportFromDate;
+    if (tTime < fTime && reportFromDate) {
+      const d = new Date(`${reportFromDate}T00:00:00`);
+      d.setDate(d.getDate() + 1);
+      tDate = localDateStr(d);
+    }
+    setReportFromTime(fTime);
+    setReportToTime(tTime);
+    setReportToDate(tDate);
+    loadVanReport(reportFromDate, fTime, tDate, tTime, reportVanId);
+  };
+
+  useEffect(() => {
+    if (execTab === 'van_report' && !vanReport) {
+      loadVanReport();
+    }
+  }, [execTab]);
 
   const openVanDrilldown = async (vanRow) => {
     setDrillLoading(true);
@@ -114,23 +185,467 @@ export default function ExecutiveDashboard() {
         <div>
           <h2 style={{ fontSize: 19, fontWeight: 800 }}>Executive Live Dashboard &amp; Closing Approvals</h2>
           <p style={{ fontSize: 12.5, color: '#64748b' }}>Real-time van sales, FIFO/FEFO net profit, split collections, date-range insights, and closing requests.</p>
+          <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className={`btn btn-sm ${execTab === 'overview' ? 'btn-primary' : 'btn-outline'}`}
+              onClick={() => setExecTab('overview')}
+            >
+              Executive Overview
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${execTab === 'van_report' ? 'btn-primary' : 'btn-outline'}`}
+              onClick={() => setExecTab('van_report')}
+            >
+              <FileText size={14} /> Van Daily Sales Report
+            </button>
+          </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', background: '#fff', padding: '6px 10px', borderRadius: 10, border: '1px solid #e2e8f0' }}>
-          <Calendar size={14} style={{ color: '#64748b' }} />
-          <input type="date" className="form-control" style={{ width: 135, padding: '4px 8px', fontSize: 12 }} value={fromDate} onChange={e => setFromDate(e.target.value)} />
-          <span style={{ fontSize: 12, color: '#64748b' }}>to</span>
-          <input type="date" className="form-control" style={{ width: 135, padding: '4px 8px', fontSize: 12 }} value={toDate} onChange={e => setToDate(e.target.value)} />
-          <button type="button" className="btn btn-primary btn-sm" onClick={() => load(fromDate, toDate)}>Search</button>
-          <button type="button" className="btn btn-outline btn-sm" onClick={() => applyPreset(0)}>Today</button>
-          <button type="button" className="btn btn-outline btn-sm" onClick={() => applyPreset(6)}>7D</button>
-          <button type="button" className="btn btn-outline btn-sm" onClick={() => applyPreset('month')}>Month</button>
-          <button type="button" className="btn btn-outline btn-sm" onClick={() => load(fromDate, toDate)}>
-            <RefreshCw size={14} />
-          </button>
-        </div>
+        {execTab === 'overview' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', background: '#fff', padding: '6px 10px', borderRadius: 10, border: '1px solid #e2e8f0' }}>
+            <Calendar size={14} style={{ color: '#64748b' }} />
+            <input type="date" className="form-control" style={{ width: 135, padding: '4px 8px', fontSize: 12 }} value={fromDate} onChange={e => setFromDate(e.target.value)} />
+            <span style={{ fontSize: 12, color: '#64748b' }}>to</span>
+            <input type="date" className="form-control" style={{ width: 135, padding: '4px 8px', fontSize: 12 }} value={toDate} onChange={e => setToDate(e.target.value)} />
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => load(fromDate, toDate)}>Search</button>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => applyPreset(0)}>Today</button>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => applyPreset(6)}>7D</button>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => applyPreset('month')}>Month</button>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => load(fromDate, toDate)}>
+              <RefreshCw size={14} />
+            </button>
+          </div>
+        )}
       </div>
 
       {msg && <div className="badge badge-emerald" style={{ padding: '9px 14px', borderRadius: 8 }}>{msg}</div>}
+
+      {execTab === 'van_report' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="card">
+            <div className="card-title" style={{ marginBottom: 10 }}>
+              <span><Calendar size={16} style={{ verticalAlign: 'middle', marginRight: 6, color: '#2563eb' }} />Van Daily Sales Report — Date, Time &amp; Shift Filter</span>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => {
+                  setReportFromDate(todayStr);
+                  setReportFromTime('00:00');
+                  setReportToDate(todayStr);
+                  setReportToTime('23:59');
+                  setReportShift('all_day');
+                  setReportVanId('');
+                  loadVanReport(todayStr, '00:00', todayStr, '23:59', '');
+                }}
+              >
+                Reset to Today
+              </button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, alignItems: 'end' }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Van</label>
+                <select
+                  className="form-control"
+                  value={reportVanId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setReportVanId(v);
+                    loadVanReport(reportFromDate, reportFromTime, reportToDate, reportToTime, v);
+                  }}
+                >
+                  <option value="">All Vans</option>
+                  {(vanReport?.vans || []).map((v) => (
+                    <option key={v.id} value={v.id}>{v.van_name}{v.plate_number ? ` (${v.plate_number})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Shift Preset</label>
+                <select
+                  className="form-control"
+                  value={reportShift}
+                  onChange={(e) => applyReportShift(e.target.value)}
+                >
+                  <option value="all_day">Full Day (00:00 - 23:59)</option>
+                  {vendorShifts.map((s) => (
+                    <option key={s.name} value={s.name}>{s.name} ({s.from} - {s.to})</option>
+                  ))}
+                  <option value="custom">Custom Date / Time</option>
+                </select>
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Start Date</label>
+                <input
+                  type="date"
+                  className="form-control"
+                  value={reportFromDate}
+                  onChange={(e) => {
+                    setReportFromDate(e.target.value);
+                    setReportShift('custom');
+                  }}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Start Time</label>
+                <input
+                  type="time"
+                  className="form-control mono"
+                  value={reportFromTime}
+                  onChange={(e) => {
+                    setReportFromTime(e.target.value);
+                    setReportShift('custom');
+                  }}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">End Date</label>
+                <input
+                  type="date"
+                  className="form-control"
+                  value={reportToDate}
+                  onChange={(e) => {
+                    setReportToDate(e.target.value);
+                    setReportShift('custom');
+                  }}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">End Time</label>
+                <input
+                  type="time"
+                  className="form-control mono"
+                  value={reportToTime}
+                  onChange={(e) => {
+                    setReportToTime(e.target.value);
+                    setReportShift('custom');
+                  }}
+                />
+              </div>
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{ width: '100%' }}
+                  disabled={reportLoading}
+                  onClick={() => loadVanReport()}
+                >
+                  <RefreshCw size={14} /> {reportLoading ? 'Loading...' : 'Search Report'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {(() => {
+            const sum = vanReport?.summary || {};
+            const repShops = vanReport?.shops || [];
+            const repAgingTotals = vanReport?.aging_totals || {};
+            const repAgingShops = vanReport?.aging_shops || [];
+            const repChqSummary = vanReport?.cheque_summary || {};
+            const repOutCheques = vanReport?.outstanding_cheques || [];
+            return (
+              <>
+                <div className="grid-4">
+                  <div className="kpi-card" style={{ borderLeft: '4px solid #2563eb' }}>
+                    <div>
+                      <div className="kpi-label">Van Sales ({sum.total_bills || 0} Bills)</div>
+                      <div className="kpi-value mono" style={{ color: '#1d4ed8' }}>{formatMoney(sum.sales_total)}</div>
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                        Returns: {formatMoney(sum.returns_total)} ({sum.total_returns || 0})
+                        {Number(sum.markup_total || 0) > 0.0005 && (
+                          <span className="badge badge-emerald mono" style={{ marginLeft: 6, fontSize: 10 }}>
+                            +{formatMoney(sum.markup_total)} Extra
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="kpi-icon" style={{ background: '#eff6ff', color: '#2563eb' }}><TrendingUp size={20} /></div>
+                  </div>
+                  <div className="kpi-card" style={{ borderLeft: '4px solid #059669' }}>
+                    <div>
+                      <div className="kpi-label">Total Collection</div>
+                      <div className="kpi-value mono" style={{ color: '#059669' }}>{formatMoney(sum.collected_total)}</div>
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                        Cash: {formatMoney(sum.cash_total)} &bull; Card/QR/Bank: {formatMoney((Number(sum.card_total || 0) + Number(sum.qr_total || 0) + Number(sum.bank_transfer_total || 0)))}
+                      </div>
+                    </div>
+                    <div className="kpi-icon" style={{ background: '#ecfdf5', color: '#059669' }}><Banknote size={20} /></div>
+                  </div>
+                  <div className="kpi-card" style={{ borderLeft: '4px solid #d97706' }}>
+                    <div>
+                      <div className="kpi-label">Period Credit &amp; Cheques</div>
+                      <div className="kpi-value mono" style={{ color: '#b45309' }}>{formatMoney(sum.credit_total)}</div>
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                        Cheques: {formatMoney(sum.cheque_total)} &bull; Net Profit: {formatMoney(sum.net_profit)}
+                      </div>
+                    </div>
+                    <div className="kpi-icon" style={{ background: '#fffbeb', color: '#d97706' }}><Clock size={20} /></div>
+                  </div>
+                  <div className="kpi-card" style={{ borderLeft: '4px solid #e11d48' }}>
+                    <div>
+                      <div className="kpi-label">Shops Outstanding ({sum.shops_served || 0} Shops)</div>
+                      <div className="kpi-value mono" style={{ color: '#be123c' }}>{formatMoney(sum.total_shop_outstanding)}</div>
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>Total current ledger balance of served shops</div>
+                    </div>
+                    <div className="kpi-icon" style={{ background: '#fff1f2', color: '#e11d48' }}><Store size={20} /></div>
+                  </div>
+                </div>
+
+                <div className="card">
+                  <div className="card-title">
+                    <span>Shop-by-Shop Van Sales, Collection &amp; Outstanding ({reportFromDate} {reportFromTime} &rarr; {reportToDate} {reportToTime})</span>
+                    <span className="badge badge-blue mono">{repShops.length} Shop(s)</span>
+                  </div>
+                  <DataTable
+                    data={repShops}
+                    searchPlaceholder="Search van, driver, shop, route..."
+                    exportFilename={`van-daily-sales-${reportFromDate}-to-${reportToDate}.csv`}
+                    emptyMessage="No van sales found for the selected date/time range."
+                    columns={[
+                      {
+                        key: 'van_name',
+                        label: 'Van / Driver',
+                        sortValue: (s) => `${s.van_name || ''} ${s.driver_name || ''}`,
+                        searchValue: (s) => `${s.van_name || ''} ${s.driver_name || ''}`,
+                        render: (s) => (
+                          <div>
+                            <div style={{ fontWeight: 700 }}>{s.van_name}</div>
+                            {s.driver_name && <div style={{ fontSize: 11, color: '#64748b' }}>{s.driver_name}</div>}
+                          </div>
+                        ),
+                      },
+                      {
+                        key: 'shop_name',
+                        label: 'Shop / Route',
+                        sortValue: (s) => s.shop_name || '',
+                        searchValue: (s) => `${s.shop_name || ''} ${s.shop_code || ''} ${s.route_name || ''}`,
+                        render: (s) => (
+                          <div>
+                            <div style={{ fontWeight: 700 }}>{s.shop_name}</div>
+                            <div style={{ fontSize: 11, color: '#64748b' }}>{s.shop_code} &bull; {s.route_name}</div>
+                          </div>
+                        ),
+                      },
+                      {
+                        key: 'bill_count',
+                        label: 'Bills',
+                        sortValue: (s) => Number(s.bill_count || 0),
+                        render: (s) => (
+                          <span className="mono">
+                            {s.bill_count}{Number(s.return_count || 0) > 0 ? ` (${s.return_count} ret)` : ''}
+                          </span>
+                        ),
+                      },
+                      {
+                        key: 'sales_total',
+                        label: 'Sales Total',
+                        sortValue: (s) => Number(s.sales_total || 0),
+                        render: (s) => (
+                          <div>
+                            <div className="mono" style={{ fontWeight: 700 }}>{formatMoney(s.sales_total)}</div>
+                            {Number(s.markup_total || 0) > 0.0005 && (
+                              <span className="badge badge-emerald mono" style={{ fontSize: 10 }}>
+                                +{formatMoney(s.markup_total)} Extra
+                              </span>
+                            )}
+                          </div>
+                        ),
+                      },
+                      {
+                        key: 'collected_total',
+                        label: 'Collected',
+                        sortValue: (s) => Number(s.collected_total || 0),
+                        render: (s) => (
+                          <div>
+                            <div className="mono" style={{ fontWeight: 700, color: '#059669' }}>{formatMoney(s.collected_total)}</div>
+                            <div className="mono" style={{ fontSize: 10.5, color: '#64748b' }}>
+                              C:{Number(s.cash_total || 0).toFixed(3)} | Cd:{Number(s.card_total || 0).toFixed(3)} | QR:{Number(s.qr_total || 0).toFixed(3)}
+                            </div>
+                          </div>
+                        ),
+                      },
+                      {
+                        key: 'cheque_total',
+                        label: 'Cheque',
+                        sortValue: (s) => Number(s.cheque_total || 0),
+                        render: (s) => <span className="mono" style={{ color: '#9d174d' }}>{formatMoney(s.cheque_total)}</span>,
+                      },
+                      {
+                        key: 'credit_total',
+                        label: 'Credit (Period)',
+                        sortValue: (s) => Number(s.credit_total || 0),
+                        render: (s) => <span className="mono" style={{ color: '#b45309', fontWeight: 600 }}>{formatMoney(s.credit_total)}</span>,
+                      },
+                      {
+                        key: 'ledger_balance',
+                        label: 'Shop Outstanding & Aging',
+                        sortValue: (s) => Number(s.ledger_balance || 0),
+                        render: (s) => (
+                          <div>
+                            <span className="mono" style={{ fontWeight: 800, color: Number(s.ledger_balance || 0) > 0 ? '#be123c' : '#059669' }}>
+                              {formatMoney(s.ledger_balance)}
+                            </span>
+                            {Number(s.ledger_balance || 0) > 0.0005 && (
+                              <div className="mono" style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
+                                0-7d:{Number(s.bucket_0_7 || 0).toFixed(3)} | 8-15d:{Number(s.bucket_8_15 || 0).toFixed(3)} | 16-30d:{Number(s.bucket_16_30 || 0).toFixed(3)} | 31+d:{Number(s.bucket_31_plus || 0).toFixed(3)}
+                              </div>
+                            )}
+                            {Number(s.pending_cheques || 0) > 0.0005 && (
+                              <div style={{ marginTop: 2 }}>
+                                <span className="badge badge-amber mono" style={{ fontSize: 9.5 }}>
+                                  Pend Chq: {formatMoney(s.pending_cheques)}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        ),
+                      },
+                      {
+                        key: 'actions',
+                        label: 'Details',
+                        sortable: false,
+                        render: (s) => (
+                          <button
+                            type="button"
+                            className="btn btn-outline btn-sm"
+                            onClick={() => {
+                              setReportShopModal(s);
+                              setReportExpandedInvId((s.invoices && s.invoices[0]?.id) || null);
+                            }}
+                          >
+                            View Bills ({(s.invoices || []).length})
+                          </button>
+                        ),
+                      },
+                    ]}
+                  />
+                </div>
+
+                {/* Credit Aging & Cheque Summary Cards */}
+                <div className="grid-2" style={{ gap: 16 }}>
+                  <div className="card">
+                    <div className="card-title">
+                      <span><Clock size={16} style={{ verticalAlign: 'middle', marginRight: 6, color: '#d97706' }} />Credit Aging Summary ({repAgingTotals.shop_count || 0} Shops)</span>
+                      <span className="mono" style={{ fontWeight: 800, color: '#be123c' }}>{formatMoney(repAgingTotals.total_outstanding)}</span>
+                    </div>
+                    <div className="grid-4" style={{ gap: 8 }}>
+                      <div style={{ padding: 10, borderRadius: 8, background: '#ecfdf5', border: '1px solid #a7f3d0' }}>
+                        <div style={{ fontSize: 10.5, fontWeight: 700, color: '#065f46' }}>0–7 Days</div>
+                        <div className="mono" style={{ fontWeight: 800, fontSize: 13.5, color: '#059669' }}>{formatMoney(repAgingTotals.bucket_0_7)}</div>
+                      </div>
+                      <div style={{ padding: 10, borderRadius: 8, background: '#eff6ff', border: '1px solid #bfdbfe' }}>
+                        <div style={{ fontSize: 10.5, fontWeight: 700, color: '#1e40af' }}>8–15 Days</div>
+                        <div className="mono" style={{ fontWeight: 800, fontSize: 13.5, color: '#2563eb' }}>{formatMoney(repAgingTotals.bucket_8_15)}</div>
+                      </div>
+                      <div style={{ padding: 10, borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a' }}>
+                        <div style={{ fontSize: 10.5, fontWeight: 700, color: '#92400e' }}>16–30 Days</div>
+                        <div className="mono" style={{ fontWeight: 800, fontSize: 13.5, color: '#d97706' }}>{formatMoney(repAgingTotals.bucket_16_30)}</div>
+                      </div>
+                      <div style={{ padding: 10, borderRadius: 8, background: '#fff1f2', border: '1px solid #fecdd3' }}>
+                        <div style={{ fontSize: 10.5, fontWeight: 700, color: '#9f1239' }}>31+ Days</div>
+                        <div className="mono" style={{ fontWeight: 800, fontSize: 13.5, color: '#e11d48' }}>{formatMoney(repAgingTotals.bucket_31_plus)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="card">
+                    <div className="card-title">
+                      <span><FileCheck2 size={16} style={{ verticalAlign: 'middle', marginRight: 6, color: '#9d174d' }} />Cheque Status Summary</span>
+                      <span className="badge badge-amber mono">{(repChqSummary.pending_count || 0) + (repChqSummary.bounced_count || 0)} Open</span>
+                    </div>
+                    <div className="grid-3" style={{ gap: 8 }}>
+                      <div style={{ padding: 10, borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a' }}>
+                        <div style={{ fontSize: 10.5, fontWeight: 700, color: '#92400e' }}>Pending ({repChqSummary.pending_count || 0})</div>
+                        <div className="mono" style={{ fontWeight: 800, fontSize: 13.5, color: '#b45309' }}>{formatMoney(repChqSummary.pending_amount)}</div>
+                      </div>
+                      <div style={{ padding: 10, borderRadius: 8, background: '#ecfdf5', border: '1px solid #a7f3d0' }}>
+                        <div style={{ fontSize: 10.5, fontWeight: 700, color: '#065f46' }}>Cleared ({repChqSummary.cleared_count || 0})</div>
+                        <div className="mono" style={{ fontWeight: 800, fontSize: 13.5, color: '#059669' }}>{formatMoney(repChqSummary.cleared_amount)}</div>
+                      </div>
+                      <div style={{ padding: 10, borderRadius: 8, background: '#fff1f2', border: '1px solid #fecdd3' }}>
+                        <div style={{ fontSize: 10.5, fontWeight: 700, color: '#9f1239' }}>Bounced ({repChqSummary.bounced_count || 0})</div>
+                        <div className="mono" style={{ fontWeight: 800, fontSize: 13.5, color: '#e11d48' }}>{formatMoney(repChqSummary.bounced_amount)}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Credit Aging by Shop Table */}
+                <div className="card">
+                  <div className="card-title">
+                    <span>Credit Aging Breakdown by Shop</span>
+                    <span className="badge badge-slate mono">{repAgingShops.length} Shop(s) with Balance</span>
+                  </div>
+                  <DataTable
+                    data={repAgingShops}
+                    searchPlaceholder="Search shop, van, route..."
+                    exportFilename={`van-credit-aging-${reportFromDate}-to-${reportToDate}.csv`}
+                    emptyMessage="No outstanding shop credit balances."
+                    columns={[
+                      {
+                        key: 'shop_name',
+                        label: 'Shop / Route',
+                        sortValue: (a) => a.shop_name || '',
+                        searchValue: (a) => `${a.shop_name || ''} ${a.shop_code || ''} ${a.route_name || ''}`,
+                        render: (a) => (
+                          <div>
+                            <div style={{ fontWeight: 700 }}>{a.shop_name}</div>
+                            <div style={{ fontSize: 11, color: '#64748b' }}>{a.shop_code} &bull; {a.route_name}</div>
+                          </div>
+                        ),
+                      },
+                      { key: 'van_name', label: 'Van', sortValue: (a) => a.van_name || '', render: (a) => <span>{a.van_name || '-'}</span> },
+                      { key: 'bucket_0_7', label: '0–7 Days', sortValue: (a) => Number(a.bucket_0_7 || 0), render: (a) => <span className="mono" style={{ color: '#059669' }}>{formatMoney(a.bucket_0_7)}</span> },
+                      { key: 'bucket_8_15', label: '8–15 Days', sortValue: (a) => Number(a.bucket_8_15 || 0), render: (a) => <span className="mono" style={{ color: '#2563eb' }}>{formatMoney(a.bucket_8_15)}</span> },
+                      { key: 'bucket_16_30', label: '16–30 Days', sortValue: (a) => Number(a.bucket_16_30 || 0), render: (a) => <span className="mono" style={{ color: '#d97706' }}>{formatMoney(a.bucket_16_30)}</span> },
+                      { key: 'bucket_31_plus', label: '31+ Days', sortValue: (a) => Number(a.bucket_31_plus || 0), render: (a) => <span className="mono" style={{ color: '#e11d48', fontWeight: 700 }}>{formatMoney(a.bucket_31_plus)}</span> },
+                      { key: 'oldest_days', label: 'Oldest', sortValue: (a) => Number(a.oldest_days || 0), render: (a) => <span className="badge badge-slate mono">{a.oldest_days || 0}d</span> },
+                      { key: 'pending_cheques', label: 'Pend. Chq', sortValue: (a) => Number(a.pending_cheques || 0), render: (a) => <span className="mono" style={{ color: '#9d174d' }}>{formatMoney(a.pending_cheques)}</span> },
+                      { key: 'total_outstanding', label: 'Total Outstanding', sortValue: (a) => Number(a.total_outstanding || 0), render: (a) => <span className="mono" style={{ fontWeight: 800, color: '#be123c' }}>{formatMoney(a.total_outstanding)}</span> },
+                    ]}
+                  />
+                </div>
+
+                {/* Outstanding Cheques Table */}
+                <div className="card">
+                  <div className="card-title">
+                    <span>Pending &amp; Bounced Cheques</span>
+                    <span className="badge badge-amber mono">{repOutCheques.length} Cheque(s)</span>
+                  </div>
+                  <DataTable
+                    data={repOutCheques}
+                    searchPlaceholder="Search cheque #, bank, shop, van..."
+                    exportFilename={`van-cheques-${reportFromDate}-to-${reportToDate}.csv`}
+                    emptyMessage="No pending or bounced cheques."
+                    columns={[
+                      { key: 'cheque_no', label: 'Cheque #', sortValue: (c) => c.cheque_no || '', render: (c) => <span className="mono" style={{ fontWeight: 700 }}>{c.cheque_no || '-'}</span> },
+                      { key: 'bank_name', label: 'Bank', sortValue: (c) => c.bank_name || '', render: (c) => <span>{c.bank_name || '-'}</span> },
+                      { key: 'paid_at', label: 'Collected Date', sortValue: (c) => c.paid_at || '', render: (c) => <span className="mono">{c.paid_at ? formatDateTime(c.paid_at) : '-'}</span> },
+                      { key: 'cheque_date', label: 'Cheque Date', sortValue: (c) => c.cheque_date || '', render: (c) => <span className="mono">{c.cheque_date || '-'}</span> },
+                      { key: 'shop_name', label: 'Shop', sortValue: (c) => c.shop_name || '', render: (c) => <span style={{ fontWeight: 600 }}>{c.shop_name || '-'}</span> },
+                      { key: 'van_name', label: 'Van', sortValue: (c) => c.van_name || '', render: (c) => <span>{c.van_name || '-'}</span> },
+                      { key: 'amount', label: 'Amount', sortValue: (c) => Number(c.amount || 0), render: (c) => <span className="mono" style={{ fontWeight: 700 }}>{formatMoney(c.amount)}</span> },
+                      {
+                        key: 'cheque_status',
+                        label: 'Status',
+                        sortValue: (c) => c.cheque_status || '',
+                        render: (c) => (
+                          <span className={`badge ${c.cheque_status === 'bounced' ? 'badge-rose' : 'badge-amber'}`}>
+                            {String(c.cheque_status || '').replace('_', ' ')}
+                          </span>
+                        ),
+                      },
+                    ]}
+                  />
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      )}
+
+      {execTab === 'overview' && (
+        <>
 
       {/* Top Executive KPIs */}
       <div className="grid-4">
@@ -703,7 +1218,25 @@ export default function ExecutiveDashboard() {
                       { key: 'item_name', label: 'Item Name', sortValue: (l) => l.item_name || '' },
                       { key: 'batch_no', label: 'Batch', sortValue: (l) => l.batch_no || '', render: (l) => <span className="mono">{l.batch_no || '-'}</span> },
                       { key: 'qty', label: 'Qty', sortValue: (l) => Number(l.qty || 0), render: (l) => <span className="mono">{Number(l.qty)} {l.uom}</span> },
-                      { key: 'unit_price', label: 'Unit Price', sortValue: (l) => Number(l.unit_price || 0), render: (l) => <span className="mono">{formatMoney(l.unit_price)}</span> },
+                      {
+                        key: 'unit_price',
+                        label: 'Unit Price',
+                        sortValue: (l) => Number(l.unit_price || 0),
+                        render: (l) => {
+                          const std = l.standard_price != null ? Number(l.standard_price) : Number(l.unit_price || 0);
+                          const diff = Number(l.unit_price || 0) - std;
+                          return (
+                            <div>
+                              <span className="mono">{formatMoney(l.unit_price)}</span>
+                              {diff > 0.0005 && (
+                                <div>
+                                  <span className="badge badge-emerald mono" style={{ fontSize: 10 }}>+{formatMoney(diff)}</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        },
+                      },
                       { key: 'unit_cost', label: 'Unit Cost', sortValue: (l) => Number(l.unit_cost || 0), render: (l) => <span className="mono">{formatMoney(l.unit_cost)}</span> },
                       { key: 'line_total', label: 'Line Total', sortValue: (l) => Number(l.line_total || 0), render: (l) => <span className="mono" style={{ fontWeight: 700 }}>{formatMoney(l.line_total)}</span> },
                     ]}
@@ -761,6 +1294,145 @@ export default function ExecutiveDashboard() {
         alertOnly
         onCancel={() => setAlertMessage('')}
       />
+        </>
+      )}
+
+      {reportShopModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.55)',
+            zIndex: 1050,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+          onClick={() => setReportShopModal(null)}
+        >
+          <div
+            className="card"
+            style={{
+              width: '100%',
+              maxWidth: 940,
+              maxHeight: '88vh',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              margin: 0,
+              boxShadow: '0 20px 45px rgba(15, 23, 42, 0.25)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, paddingBottom: 12, borderBottom: '1px solid #e2e8f0', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a' }}>
+                  {reportShopModal.shop_name} <span className="mono" style={{ fontSize: 12.5, color: '#64748b' }}>({reportShopModal.shop_code})</span>
+                </div>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4, fontSize: 12, color: '#475569' }}>
+                  <span>Van: <strong>{reportShopModal.van_name}</strong></span>
+                  <span>Sales: <strong className="mono">{formatMoney(reportShopModal.sales_total)}</strong></span>
+                  <span>Collected: <strong className="mono" style={{ color: '#059669' }}>{formatMoney(reportShopModal.collected_total)}</strong></span>
+                  <span>Period Credit: <strong className="mono" style={{ color: '#b45309' }}>{formatMoney(reportShopModal.credit_total)}</strong></span>
+                  <span>Total Outstanding: <strong className="mono" style={{ color: '#be123c' }}>{formatMoney(reportShopModal.ledger_balance)}</strong></span>
+                </div>
+              </div>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => setReportShopModal(null)}>
+                <X size={14} /> Close
+              </button>
+            </div>
+            <div style={{ overflowY: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {(reportShopModal.invoices || []).map((inv) => {
+                const isOpen = reportExpandedInvId === inv.id;
+                return (
+                  <div key={inv.id} style={{ border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
+                    <button
+                      type="button"
+                      onClick={() => setReportExpandedInvId(isOpen ? null : inv.id)}
+                      style={{
+                        width: '100%',
+                        padding: '10px 12px',
+                        background: '#f8fafc',
+                        border: 'none',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: 8,
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <strong className="mono">{inv.invoice_no}</strong>
+                        <span className={`badge ${inv.invoice_type === 'sale' ? 'badge-blue' : 'badge-rose'}`}>{inv.invoice_type}</span>
+                        <span className="mono" style={{ fontSize: 11.5, color: '#64748b' }}>{formatDateTime(inv.created_at)}</span>
+                        {Number(inv.markup_total || 0) > 0.0005 && (
+                          <span className="badge badge-emerald mono">+{formatMoney(inv.markup_total)} Extra</span>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span className="mono" style={{ fontWeight: 800, fontSize: 13 }}>{formatMoney(inv.total_amount)}</span>
+                        <ChevronRight size={15} style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
+                      </div>
+                    </button>
+                    {isOpen && (
+                      <div style={{ padding: '10px 12px', background: '#fff', borderTop: '1px solid #e2e8f0' }}>
+                        <div style={{ overflowX: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                            <thead>
+                              <tr style={{ background: '#f1f5f9', textAlign: 'left', color: '#475569', fontSize: 11 }}>
+                                <th style={{ padding: '6px 8px' }}>SKU</th>
+                                <th style={{ padding: '6px 8px' }}>Item</th>
+                                <th style={{ padding: '6px 8px' }}>Batch</th>
+                                <th style={{ padding: '6px 8px' }}>Qty</th>
+                                <th style={{ padding: '6px 8px' }}>Unit Price</th>
+                                <th style={{ padding: '6px 8px' }}>Line Total</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(inv.lines || []).map((ln) => {
+                                const markupPerUnit = ln.standard_price != null ? Number(ln.unit_price) - Number(ln.standard_price) : 0;
+                                return (
+                                  <tr key={ln.id} style={{ borderTop: '1px solid #f1f5f9' }}>
+                                    <td style={{ padding: '6px 8px' }} className="mono"><strong>{ln.sku}</strong></td>
+                                    <td style={{ padding: '6px 8px' }}>{ln.item_name}</td>
+                                    <td style={{ padding: '6px 8px' }} className="mono">{ln.batch_no || '-'}</td>
+                                    <td style={{ padding: '6px 8px' }} className="mono">{Number(ln.qty)} {ln.uom}</td>
+                                    <td style={{ padding: '6px 8px' }} className="mono">
+                                      {formatMoney(ln.unit_price)}
+                                      {markupPerUnit > 0.0005 && (
+                                        <span className="badge badge-emerald mono" style={{ marginLeft: 6, fontSize: 10 }}>
+                                          +{formatMoney(markupPerUnit)}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td style={{ padding: '6px 8px', fontWeight: 700 }} className="mono">{formatMoney(ln.line_total)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        {(inv.payments || []).length > 0 && (
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                            {inv.payments.map((pm) => (
+                              <span key={pm.id} className="badge badge-slate mono" style={{ fontSize: 11 }}>
+                                {pm.payment_method.toUpperCase()}: {formatMoney(pm.amount)}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

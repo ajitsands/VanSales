@@ -41,7 +41,7 @@ class Request
     public function bearerToken(): ?string
     {
         $headers = function_exists('getallheaders') ? getallheaders() : [];
-        $auth = $headers['Authorization'] ?? $headers['authorization'] ?? ($_SERVER['HTTP_AUTHORIZATION'] ?? '');
+        $auth = $headers['Authorization'] ?? $headers['authorization'] ?? ($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
         if (preg_match('/Bearer\s+(\S+)/i', $auth, $m)) {
             return $m[1];
         }

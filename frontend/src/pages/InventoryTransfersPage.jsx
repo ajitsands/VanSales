@@ -16,6 +16,11 @@ export default function InventoryTransfersPage() {
   const [expandedTransferVans, setExpandedTransferVans] = useState({});
   const [expandedRequestVans, setExpandedRequestVans] = useState({});
   const [expandedCancelledVans, setExpandedCancelledVans] = useState({});
+  const [stockReportSubTab, setStockReportSubTab] = usePersistedState('inv_stock_report_subtab', 'store');
+  const [expandedStockVans, setExpandedStockVans] = useState({});
+  const [storeMoveVanId, setStoreMoveVanId] = usePersistedState('inv_store_move_van', '');
+  const [storeMoveQtys, setStoreMoveQtys] = useState({});
+  const [vanActionQtys, setVanActionQtys] = useState({});
   const [batches, setBatches] = useState([]);
   const [requests, setRequests] = useState([]);
   const [transfers, setTransfers] = useState([]);
@@ -29,6 +34,7 @@ export default function InventoryTransfersPage() {
   const [err, setErr] = useState('');
   const [confirmPopup, setConfirmPopup] = useState(null);
   const [popupLoading, setPopupLoading] = useState(false);
+  const [transferItemsModal, setTransferItemsModal] = useState(null);
 
   const load = async () => {
     try {
@@ -385,6 +391,7 @@ export default function InventoryTransfersPage() {
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button className={`btn btn-sm ${tab === 'batches' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setTab('batches')}>FIFO/FEFO Batches ({batches.length})</button>
+          <button className={`btn btn-sm ${tab === 'stock_report' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setTab('stock_report')}>Stock &amp; Valuation Report</button>
           <button className={`btn btn-sm ${tab === 'dispatch' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setTab('dispatch')}>Requests &amp; Dispatch ({requests.filter(r => r.status === 'pending').length})</button>
           <button className={`btn btn-sm ${tab === 'transfers' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setTab('transfers')}>All Transfers ({transfers.length})</button>
           <button className={`btn btn-sm ${tab === 'damages' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setTab('damages')}>Returns &amp; Damages ({damages.filter(d => d.qc_status === 'pending_qc').length})</button>
@@ -455,6 +462,529 @@ export default function InventoryTransfersPage() {
           />
         </div>
       )}
+
+      {tab === 'stock_report' && (() => {
+        const storeBatches = batches.filter(b => b.location_type === 'main_store' && Number(b.qty_available) > 0);
+        const vanBatches = batches.filter(b => b.location_type === 'van' && Number(b.qty_available) > 0);
+
+        const storeItemsMap = {};
+        let storeTotalQty = 0;
+        let storeBuyingValue = 0;
+        let storeSellingValue = 0;
+
+        storeBatches.forEach(b => {
+          const qty = Number(b.qty_available || 0);
+          const cost = Number(b.unit_cost || 0);
+          const sell = Number(b.selling_price || 0);
+          const buyVal = qty * cost;
+          const sellVal = qty * sell;
+          storeTotalQty += qty;
+          storeBuyingValue += buyVal;
+          storeSellingValue += sellVal;
+
+          const k = String(b.item_id);
+          if (!storeItemsMap[k]) {
+            storeItemsMap[k] = {
+              id: k,
+              item_id: b.item_id,
+              sku: b.sku,
+              item_name: b.item_name,
+              uom: b.uom || 'PCS',
+              batchCount: 0,
+              totalQty: 0,
+              buyingValue: 0,
+              sellingValue: 0,
+            };
+          }
+          storeItemsMap[k].batchCount += 1;
+          storeItemsMap[k].totalQty += qty;
+          storeItemsMap[k].buyingValue += buyVal;
+          storeItemsMap[k].sellingValue += sellVal;
+        });
+
+        const storeItems = Object.values(storeItemsMap).sort((a, b) => String(a.sku).localeCompare(String(b.sku)));
+
+        const vanMap = {};
+        let vanTotalQty = 0;
+        let vanBuyingValue = 0;
+        let vanSellingValue = 0;
+
+        vanBatches.forEach(b => {
+          const qty = Number(b.qty_available || 0);
+          const cost = Number(b.unit_cost || 0);
+          const sell = Number(b.selling_price || 0);
+          const buyVal = qty * cost;
+          const sellVal = qty * sell;
+          vanTotalQty += qty;
+          vanBuyingValue += buyVal;
+          vanSellingValue += sellVal;
+
+          const vKey = String(b.van_id || b.van_name || 'unknown');
+          if (!vanMap[vKey]) {
+            vanMap[vKey] = {
+              id: vKey,
+              van_id: b.van_id,
+              van_name: b.van_name || `Van #${b.van_id || '-'}`,
+              van_code: b.van_code || '',
+              totalQty: 0,
+              buyingValue: 0,
+              sellingValue: 0,
+              itemsMap: {},
+            };
+          }
+          vanMap[vKey].totalQty += qty;
+          vanMap[vKey].buyingValue += buyVal;
+          vanMap[vKey].sellingValue += sellVal;
+
+          const iKey = String(b.item_id);
+          if (!vanMap[vKey].itemsMap[iKey]) {
+            vanMap[vKey].itemsMap[iKey] = {
+              id: iKey,
+              item_id: b.item_id,
+              sku: b.sku,
+              item_name: b.item_name,
+              uom: b.uom || 'PCS',
+              batchCount: 0,
+              totalQty: 0,
+              buyingValue: 0,
+              sellingValue: 0,
+            };
+          }
+          vanMap[vKey].itemsMap[iKey].batchCount += 1;
+          vanMap[vKey].itemsMap[iKey].totalQty += qty;
+          vanMap[vKey].itemsMap[iKey].buyingValue += buyVal;
+          vanMap[vKey].itemsMap[iKey].sellingValue += sellVal;
+        });
+
+        const vanGroups = Object.values(vanMap).map(vg => ({
+          ...vg,
+          items: Object.values(vg.itemsMap).sort((a, b) => String(a.sku).localeCompare(String(b.sku))),
+        }));
+
+        const grandQty = storeTotalQty + vanTotalQty;
+        const grandBuying = storeBuyingValue + vanBuyingValue;
+        const grandSelling = storeSellingValue + vanSellingValue;
+
+        const moveSingleStoreItemToVan = async (item) => {
+          setErr(''); setMsg('');
+          if (!storeMoveVanId) {
+            setErr('Please select a Target Van first.');
+            return;
+          }
+          const q = Number(storeMoveQtys[item.item_id] || 0);
+          if (q <= 0) {
+            setErr(`Enter a valid quantity (> 0) for ${item.sku}.`);
+            return;
+          }
+          try {
+            const res = await api.post('/api/transfers/store-to-van', {
+              to_van_id: Number(storeMoveVanId),
+              notes: `Store Stock Transfer (${item.sku})`,
+              lines: [{ item_id: Number(item.item_id), qty: q }],
+            });
+            setStoreMoveQtys(prev => {
+              const next = { ...prev };
+              delete next[item.item_id];
+              return next;
+            });
+            setMsg(`Moved ${q} ${item.uom} of ${item.sku} to Van (${res.transfer_no}, OTP: ${res.otp_code}) — Ready for Pickup!`);
+            load();
+          } catch (e2) {
+            setErr(e2.message);
+          }
+        };
+
+        const moveBulkStoreItemsToVan = async () => {
+          setErr(''); setMsg('');
+          if (!storeMoveVanId) {
+            setErr('Please select a Target Van first.');
+            return;
+          }
+          const lines = storeItems
+            .map(it => ({ item_id: Number(it.item_id), qty: Number(storeMoveQtys[it.item_id] || 0) }))
+            .filter(l => l.qty > 0);
+          if (lines.length === 0) {
+            setErr('Enter Move Qty (> 0) in at least one row.');
+            return;
+          }
+          try {
+            const res = await api.post('/api/transfers/store-to-van', {
+              to_van_id: Number(storeMoveVanId),
+              notes: `Bulk Store Stock Transfer (${lines.length} items)`,
+              lines,
+            });
+            setStoreMoveQtys({});
+            setMsg(`Bulk Transfer ${res.transfer_no} (OTP: ${res.otp_code}) created for ${lines.length} item(s) — Ready for Pickup!`);
+            load();
+          } catch (e2) {
+            setErr(e2.message);
+          }
+        };
+
+        const reportStoreItemDamage = async (item) => {
+          setErr(''); setMsg('');
+          const q = Number(storeMoveQtys[item.item_id] || 0);
+          if (q <= 0) {
+            setErr(`Enter a valid quantity (> 0) for ${item.sku} to move to Damage.`);
+            return;
+          }
+          try {
+            const res = await api.post('/api/returns-damages', {
+              location_type: 'main_store',
+              item_id: Number(item.item_id),
+              qty: q,
+              return_type: 'damaged',
+              reason_code: 'Store Damage',
+              notes: `Damaged in Main Store (${item.sku})`,
+            });
+            setStoreMoveQtys(prev => {
+              const next = { ...prev };
+              delete next[item.item_id];
+              return next;
+            });
+            setMsg(res?.message || `${q} ${item.uom} of ${item.sku} moved from Store to Damage QC.`);
+            load();
+          } catch (e2) {
+            setErr(e2.message);
+          }
+        };
+
+        const reportVanItemAction = async (vanGroup, item, returnType) => {
+          setErr(''); setMsg('');
+          const key = `${vanGroup.van_id}_${item.item_id}`;
+          const q = Number(vanActionQtys[key] || 0);
+          if (q <= 0) {
+            setErr(`Enter a valid quantity (> 0) for ${item.sku} in ${vanGroup.van_name}.`);
+            return;
+          }
+          try {
+            const res = await api.post('/api/returns-damages', {
+              location_type: 'van',
+              van_id: Number(vanGroup.van_id),
+              item_id: Number(item.item_id),
+              qty: q,
+              return_type: returnType,
+              reason_code: returnType === 'good_return' ? 'Van Return to Store' : 'Van Damage',
+              notes: `${returnType === 'good_return' ? 'Good Return' : 'Damaged'} from ${vanGroup.van_name} (${item.sku})`,
+            });
+            setVanActionQtys(prev => {
+              const next = { ...prev };
+              delete next[key];
+              return next;
+            });
+            setMsg(res?.message || `${q} ${item.uom} of ${item.sku} logged as ${returnType.replace('_', ' ')} from ${vanGroup.van_name}.`);
+            load();
+          } catch (e2) {
+            setErr(e2.message);
+          }
+        };
+
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {/* Top Summary KPI Cards */}
+            <div className="grid-3">
+              <div className="card" style={{ borderLeft: '4px solid #2563eb' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#1e40af', marginBottom: 6 }}>Main Store Stock</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+                  <span style={{ color: '#475569' }}>Total Quantity:</span>
+                  <strong className="mono">{storeTotalQty.toFixed(2)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+                  <span style={{ color: '#475569' }}>Buying Value:</span>
+                  <strong className="mono" style={{ color: '#0f172a' }}>{formatMoney(storeBuyingValue)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
+                  <span style={{ color: '#475569' }}>Selling Value:</span>
+                  <strong className="mono" style={{ color: '#059669' }}>{formatMoney(storeSellingValue)}</strong>
+                </div>
+              </div>
+
+              <div className="card" style={{ borderLeft: '4px solid #d97706' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e', marginBottom: 6 }}>All Vans Stock ({vanGroups.length} Vans)</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+                  <span style={{ color: '#475569' }}>Total Quantity:</span>
+                  <strong className="mono">{vanTotalQty.toFixed(2)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+                  <span style={{ color: '#475569' }}>Buying Value:</span>
+                  <strong className="mono" style={{ color: '#0f172a' }}>{formatMoney(vanBuyingValue)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
+                  <span style={{ color: '#475569' }}>Selling Value:</span>
+                  <strong className="mono" style={{ color: '#059669' }}>{formatMoney(vanSellingValue)}</strong>
+                </div>
+              </div>
+
+              <div className="card" style={{ borderLeft: '4px solid #059669', background: '#f0fdf4' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#065f46', marginBottom: 6 }}>Total Inventory (Store + Vans)</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+                  <span style={{ color: '#334155' }}>Total Quantity:</span>
+                  <strong className="mono">{grandQty.toFixed(2)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+                  <span style={{ color: '#334155' }}>Total Buying Value:</span>
+                  <strong className="mono" style={{ color: '#0f172a' }}>{formatMoney(grandBuying)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
+                  <span style={{ color: '#334155' }}>Total Selling Value:</span>
+                  <strong className="mono" style={{ color: '#059669', fontSize: 14 }}>{formatMoney(grandSelling)}</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* Sub-Tabs for Store Stock Report vs Van Stock Report */}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className={`btn btn-sm ${stockReportSubTab === 'store' ? 'btn-blue' : 'btn-outline'}`}
+                onClick={() => setStockReportSubTab('store')}
+              >
+                All Store Stock Report ({storeItems.length} SKUs &bull; Qty: {storeTotalQty.toFixed(2)})
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${stockReportSubTab === 'vans' ? 'btn-blue' : 'btn-outline'}`}
+                onClick={() => setStockReportSubTab('vans')}
+              >
+                Van Stock Report ({vanGroups.length} Vans &bull; Qty: {vanTotalQty.toFixed(2)})
+              </button>
+            </div>
+
+            {stockReportSubTab === 'store' && (
+              <div className="card">
+                <div className="card-title" style={{ flexWrap: 'wrap', gap: 8 }}>
+                  <span>All Store Stock Report &mdash; Buying &amp; Selling Valuation</span>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 12 }}>
+                    <span className="badge badge-blue mono">Total Qty: {storeTotalQty.toFixed(2)}</span>
+                    <span className="badge badge-slate mono">Buying: {formatMoney(storeBuyingValue)}</span>
+                    <span className="badge badge-emerald mono">Selling: {formatMoney(storeSellingValue)}</span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 12, padding: '10px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: '#0f172a' }}>Select Target Van:</span>
+                  <div style={{ minWidth: 240, flex: '1 1 240px', maxWidth: 340 }}>
+                    <SearchableSelect
+                      value={storeMoveVanId}
+                      onChange={val => setStoreMoveVanId(val)}
+                      placeholder="Choose Van to move stock..."
+                      searchPlaceholder="Search van..."
+                      options={vans.map(v => ({ value: v.id, label: v.van_name, sublabel: v.van_code }))}
+                    />
+                  </div>
+                  <button type="button" className="btn btn-emerald btn-sm" onClick={moveBulkStoreItemsToVan}>
+                    <Send size={13} /> Move All Filled to Van
+                  </button>
+                </div>
+                <DataTable
+                  data={storeItems}
+                  emptyText="No active stock in Main Store."
+                  searchPlaceholder="Search SKU or item name..."
+                  exportFilename="main-store-stock-valuation.csv"
+                  columns={[
+                    {
+                      key: 'sku',
+                      label: 'SKU & Item',
+                      sortValue: (x) => `${x.sku} ${x.item_name}`,
+                      searchValue: (x) => `${x.sku} ${x.item_name}`,
+                      render: (x) => <><strong>{x.sku}</strong> &mdash; {x.item_name}</>,
+                    },
+                    { key: 'batchCount', label: 'Batches', sortValue: (x) => x.batchCount, render: (x) => <span className="badge badge-slate mono">{x.batchCount}</span> },
+                    { key: 'totalQty', label: 'Total Qty', sortValue: (x) => x.totalQty, render: (x) => <span className="mono" style={{ fontWeight: 800 }}>{x.totalQty.toFixed(2)} {x.uom}</span> },
+                    { key: 'avgCost', label: 'Avg Buying Price', sortValue: (x) => x.totalQty > 0 ? x.buyingValue / x.totalQty : 0, render: (x) => <span className="mono">{formatMoney(x.totalQty > 0 ? x.buyingValue / x.totalQty : 0)}</span> },
+                    { key: 'avgSell', label: 'Avg Selling Price', sortValue: (x) => x.totalQty > 0 ? x.sellingValue / x.totalQty : 0, render: (x) => <span className="mono" style={{ color: '#059669' }}>{formatMoney(x.totalQty > 0 ? x.sellingValue / x.totalQty : 0)}</span> },
+                    { key: 'buyingValue', label: 'Buying Value', sortValue: (x) => x.buyingValue, render: (x) => <span className="mono" style={{ fontWeight: 700 }}>{formatMoney(x.buyingValue)}</span> },
+                    { key: 'sellingValue', label: 'Selling Value', sortValue: (x) => x.sellingValue, render: (x) => <span className="mono" style={{ fontWeight: 800, color: '#059669' }}>{formatMoney(x.sellingValue)}</span> },
+                    {
+                      key: 'move_to_van',
+                      label: 'Move to Van',
+                      sortable: false,
+                      render: (x) => (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                          <input
+                            type="number"
+                            min="0"
+                            max={x.totalQty}
+                            step="1"
+                            placeholder="Qty"
+                            className="form-control mono"
+                            style={{ width: 78, padding: '4px 6px', fontSize: 12 }}
+                            value={storeMoveQtys[x.item_id] ?? ''}
+                            onChange={e => setStoreMoveQtys(prev => ({ ...prev, [x.item_id]: e.target.value }))}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={() => moveSingleStoreItemToVan(x)}
+                            title="Move entered quantity to selected Van"
+                          >
+                            <Send size={12} /> Move to Van
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-rose btn-sm"
+                            onClick={() => reportStoreItemDamage(x)}
+                            title="Move entered quantity from Main Store to Damage QC"
+                          >
+                            <AlertTriangle size={12} /> Damage
+                          </button>
+                        </div>
+                      ),
+                    },
+                  ]}
+                />
+              </div>
+            )}
+
+            {stockReportSubTab === 'vans' && (
+              <div className="card">
+                <div className="card-title" style={{ flexWrap: 'wrap', gap: 8 }}>
+                  <span>Van Stock Report &mdash; Grouped by Van</span>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 }}>
+                    <span className="badge badge-amber mono">Total Van Qty: {vanTotalQty.toFixed(2)}</span>
+                    <span className="badge badge-slate mono">Buying: {formatMoney(vanBuyingValue)}</span>
+                    <span className="badge badge-emerald mono">Selling: {formatMoney(vanSellingValue)}</span>
+                    {vanGroups.length > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-outline btn-sm"
+                          onClick={() => {
+                            const all = {};
+                            vanGroups.forEach(vg => { all[vg.id] = true; });
+                            setExpandedStockVans(all);
+                          }}
+                        >
+                          Expand All
+                        </button>
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => setExpandedStockVans({})}>
+                          Collapse All
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <DataTable
+                  data={vanGroups}
+                  emptyText="No active stock in any Van."
+                  searchPlaceholder="Search van, SKU, item..."
+                  exportFilename="van-stock-valuation.csv"
+                  columns={[
+                    {
+                      key: 'van_name',
+                      label: 'Van',
+                      sortValue: (vg) => vg.van_name || '',
+                      searchValue: (vg) => `${vg.van_name} ${vg.items.map(it => `${it.sku} ${it.item_name}`).join(' ')}`,
+                    },
+                    { key: 'skuCount', label: 'SKUs', sortValue: (vg) => vg.items.length },
+                    { key: 'totalQty', label: 'Total Qty', sortValue: (vg) => vg.totalQty },
+                    { key: 'buyingValue', label: 'Buying Value', sortValue: (vg) => vg.buyingValue },
+                    { key: 'sellingValue', label: 'Selling Value', sortValue: (vg) => vg.sellingValue },
+                  ]}
+                  renderParentChild={(vg) => {
+                    const isOpen = !!expandedStockVans[vg.id];
+                    return (
+                      <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', background: '#fff' }}>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedStockVans(prev => ({ ...prev, [vg.id]: !prev[vg.id] }))}
+                          style={{
+                            width: '100%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            flexWrap: 'wrap',
+                            gap: 10,
+                            padding: '11px 14px',
+                            background: isOpen ? '#eff6ff' : '#f8fafc',
+                            border: 'none',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 800, color: '#0f172a', fontSize: 13.5 }}>
+                            {isOpen ? <ChevronDown size={16} color="#2563eb" /> : <ChevronRight size={16} color="#475569" />}
+                            <span>{vg.van_name}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12 }}>
+                            <span className="badge badge-blue mono">{vg.items.length} SKUs</span>
+                            <span className="badge badge-amber mono">Qty: {vg.totalQty.toFixed(2)}</span>
+                            <span className="badge badge-slate mono">Buying: {formatMoney(vg.buyingValue)}</span>
+                            <span className="badge badge-emerald mono">Selling: {formatMoney(vg.sellingValue)}</span>
+                          </div>
+                        </button>
+                        {isOpen && (
+                          <div style={{ padding: '10px 14px', background: '#fff', borderTop: '1px solid #e2e8f0' }}>
+                            <div style={{ overflowX: 'auto' }}>
+                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, background: '#fff', border: '1px solid #e2e8f0' }}>
+                                <thead>
+                                  <tr style={{ background: '#f1f5f9', textAlign: 'left', color: '#475569', fontSize: 11 }}>
+                                    <th style={{ padding: '7px 10px' }}>SKU &amp; Item</th>
+                                    <th style={{ padding: '7px 10px' }}>Batches</th>
+                                    <th style={{ padding: '7px 10px' }}>Total Qty</th>
+                                    <th style={{ padding: '7px 10px' }}>Buying Value</th>
+                                    <th style={{ padding: '7px 10px' }}>Selling Value</th>
+                                    <th style={{ padding: '7px 10px' }}>Return / Damage from Van</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {vg.items.map(it => {
+                                    const vKey = `${vg.van_id}_${it.item_id}`;
+                                    return (
+                                    <tr key={it.id} style={{ borderTop: '1px solid #e2e8f0' }}>
+                                      <td style={{ padding: '7px 10px' }}><strong>{it.sku}</strong> &mdash; {it.item_name}</td>
+                                      <td style={{ padding: '7px 10px' }}><span className="badge badge-slate mono">{it.batchCount}</span></td>
+                                      <td style={{ padding: '7px 10px', fontWeight: 800 }} className="mono">{it.totalQty.toFixed(2)} {it.uom}</td>
+                                      <td style={{ padding: '7px 10px', fontWeight: 700 }} className="mono">{formatMoney(it.buyingValue)}</td>
+                                      <td style={{ padding: '7px 10px', fontWeight: 800, color: '#059669' }} className="mono">{formatMoney(it.sellingValue)}</td>
+                                      <td style={{ padding: '7px 10px' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            max={it.totalQty}
+                                            step="1"
+                                            placeholder="Qty"
+                                            className="form-control mono"
+                                            style={{ width: 72, padding: '4px 6px', fontSize: 12 }}
+                                            value={vanActionQtys[vKey] ?? ''}
+                                            onChange={e => setVanActionQtys(prev => ({ ...prev, [vKey]: e.target.value }))}
+                                          />
+                                          <button
+                                            type="button"
+                                            className="btn btn-outline btn-sm"
+                                            style={{ color: '#2563eb', borderColor: '#bfdbfe' }}
+                                            onClick={() => reportVanItemAction(vg, it, 'good_return')}
+                                            title="Return good stock from Van to Store (QC)"
+                                          >
+                                            Return
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="btn btn-rose btn-sm"
+                                            onClick={() => reportVanItemAction(vg, it, 'damaged')}
+                                            title="Move damaged stock from Van to Damage QC"
+                                          >
+                                            <AlertTriangle size={12} /> Damage
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {tab === 'dispatch' && (
         <>
@@ -1119,11 +1649,18 @@ export default function InventoryTransfersPage() {
                                   <td style={{ padding: '7px 10px', color: '#475569' }} className="mono">{formatDateTime(t.created_at)}</td>
                                   <td style={{ padding: '7px 10px' }}><span className="badge badge-blue mono">{t.otp_code}</span></td>
                                   <td style={{ padding: '7px 10px' }}>
-                                    {(t.lines || []).map((l) => (
-                                      <div key={l.id} style={{ fontSize: 11.5 }}>
-                                        <strong>{l.sku}</strong> - {l.item_name}: <strong className="mono">{Number(l.qty)}</strong> (Batch {l.batch_no})
-                                      </div>
-                                    ))}
+                                    <button
+                                      type="button"
+                                      className="btn btn-outline btn-sm"
+                                      onClick={() => setTransferItemsModal(t)}
+                                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}
+                                    >
+                                      <Layers size={13} color="#2563eb" />
+                                      <span>View Items ({(t.lines || []).length})</span>
+                                      <span className="badge badge-slate mono" style={{ fontSize: 10.5 }}>
+                                        Qty: {Number((t.lines || []).reduce((acc, l) => acc + Number(l.qty || 0), 0).toFixed(2))}
+                                      </span>
+                                    </button>
                                   </td>
                                   <td style={{ padding: '7px 10px' }}>
                                     <span className={`badge ${t.status === 'completed' ? 'badge-emerald' : 'badge-amber'}`}>
@@ -1171,10 +1708,23 @@ export default function InventoryTransfersPage() {
               { key: 'otp_code', label: 'OTP', sortValue: (t) => t.otp_code || '', render: (t) => <span className="mono">{t.otp_code}</span> },
               {
                 key: 'lines',
-                label: 'Lines',
+                label: 'Transferred Items',
                 sortable: false,
-                searchValue: (t) => (t.lines || []).map((l) => `${l.sku} ${l.batch_no}`).join(' '),
-                render: (t) => (t.lines || []).map(l => <div key={l.id} style={{ fontSize: 11 }}>{l.sku}: {l.qty} (Batch {l.batch_no})</div>),
+                searchValue: (t) => (t.lines || []).map((l) => `${l.sku} ${l.item_name || ''} ${l.batch_no}`).join(' '),
+                render: (t) => (
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={() => setTransferItemsModal(t)}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}
+                  >
+                    <Layers size={13} color="#2563eb" />
+                    <span>View Items ({(t.lines || []).length})</span>
+                    <span className="badge badge-slate mono" style={{ fontSize: 10.5 }}>
+                      Qty: {Number((t.lines || []).reduce((acc, l) => acc + Number(l.qty || 0), 0).toFixed(2))}
+                    </span>
+                  </button>
+                ),
               },
               {
                 key: 'status',
@@ -1230,6 +1780,87 @@ export default function InventoryTransfersPage() {
               },
             ]}
           />
+        </div>
+      )}
+
+      {transferItemsModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.55)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+          onClick={() => setTransferItemsModal(null)}
+        >
+          <div
+            className="card"
+            style={{
+              width: '100%',
+              maxWidth: 920,
+              maxHeight: '88vh',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              margin: 0,
+              boxShadow: '0 20px 45px rgba(15, 23, 42, 0.25)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, paddingBottom: 12, borderBottom: '1px solid #e2e8f0', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <Layers size={18} color="#2563eb" />
+                  <span style={{ fontWeight: 800, fontSize: 16, color: '#0f172a' }}>
+                    Transferred Items &mdash; <span className="mono">{transferItemsModal.transfer_no}</span>
+                  </span>
+                  <span className={`badge ${transferItemsModal.status === 'completed' ? 'badge-emerald' : 'badge-amber'}`}>
+                    {transferItemsModal.status === 'completed' ? 'Confirmed (Van Stock Updated)' : 'Ready to Pickup'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 6, fontSize: 12.5, color: '#475569' }}>
+                  <span>
+                    Route: <strong>{transferItemsModal.from_van_name || 'Main Store'}</strong> &rarr; <strong>{transferItemsModal.to_van_name || 'Van'}</strong>
+                  </span>
+                  {transferItemsModal.otp_code && (
+                    <span>OTP: <span className="badge badge-blue mono">{transferItemsModal.otp_code}</span></span>
+                  )}
+                  {transferItemsModal.created_at && (
+                    <span className="mono">Date: {formatDateTime(transferItemsModal.created_at)}</span>
+                  )}
+                  <span>
+                    Items: <strong>{(transferItemsModal.lines || []).length}</strong> &bull; Total Qty:{' '}
+                    <strong className="mono">
+                      {Number((transferItemsModal.lines || []).reduce((acc, l) => acc + Number(l.qty || 0), 0).toFixed(2))}
+                    </strong>
+                  </span>
+                </div>
+              </div>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => setTransferItemsModal(null)}>
+                Close
+              </button>
+            </div>
+            <div style={{ overflowY: 'auto', marginTop: 12 }}>
+              <DataTable
+                data={(transferItemsModal.lines || []).map((l, idx) => ({ ...l, _rowNum: idx + 1 }))}
+                searchPlaceholder="Search SKU, item name, batch #..."
+                exportFilename={`${transferItemsModal.transfer_no || 'transfer'}-items.csv`}
+                initialPageSize={25}
+                columns={[
+                  { key: '_rowNum', label: '#', sortValue: (l) => l._rowNum, render: (l) => <span className="mono" style={{ color: '#64748b' }}>{l._rowNum}</span> },
+                  { key: 'sku', label: 'SKU', sortValue: (l) => l.sku || '', render: (l) => <span className="mono" style={{ fontWeight: 700 }}>{l.sku}</span> },
+                  { key: 'item_name', label: 'Item Name', sortValue: (l) => l.item_name || '', render: (l) => <span>{l.item_name || '-'}</span> },
+                  { key: 'batch_no', label: 'Batch #', sortValue: (l) => l.batch_no || '', render: (l) => <span className="badge badge-blue mono">{l.batch_no || '-'}</span> },
+                  { key: 'qty', label: 'Qty', sortValue: (l) => Number(l.qty || 0), render: (l) => <span className="mono" style={{ fontWeight: 700 }}>{Number(Number(l.qty || 0).toFixed(2))}</span> },
+                  { key: 'uom', label: 'UOM', sortValue: (l) => l.uom || '', render: (l) => <span style={{ color: '#475569' }}>{l.uom || 'PCS'}</span> },
+                ]}
+              />
+            </div>
+          </div>
         </div>
       )}
 

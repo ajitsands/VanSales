@@ -81,6 +81,7 @@ $router->add('GET', '/api/vans', [AdminController::class, 'listVans'], $vendorUs
 // Executive Admin Dashboard (Admin or Account with reports)
 $router->add('GET', '/api/dashboard/executive', [DashboardController::class, 'executive'], [$auth, AuthMiddleware::requirePermission('reports')]);
 $router->add('GET', '/api/dashboard/van-drilldown', [DashboardController::class, 'vanDrilldown'], [$auth, AuthMiddleware::requirePermission('reports')]);
+$router->add('GET', '/api/dashboard/van-sales-report', [DashboardController::class, 'vanSalesReport'], [$auth, AuthMiddleware::requirePermission('reports')]);
 $router->add('GET', '/api/dashboard/van', [DashboardController::class, 'vanDashboard'], $vendorUsers);
 
 // Procurement & Item Master
@@ -91,6 +92,7 @@ $router->add('POST', '/api/items', [ProcurementController::class, 'createItem'],
 $router->add('PUT', '/api/items/{id}', [ProcurementController::class, 'updateItem'], [$auth, AuthMiddleware::requirePermission('procurement')]);
 $router->add('GET', '/api/grns', [ProcurementController::class, 'listGrns'], [$auth, AuthMiddleware::requirePermission('procurement')]);
 $router->add('POST', '/api/grns', [ProcurementController::class, 'createGrn'], [$auth, AuthMiddleware::requirePermission('procurement')]);
+$router->add('PUT', '/api/grns/{grn_id}/items/{batch_id}', [ProcurementController::class, 'updateGrnItem'], [$auth, AuthMiddleware::requirePermission('procurement')]);
 $router->add('DELETE', '/api/grns/{id}', [ProcurementController::class, 'deleteGrn'], [$auth, AuthMiddleware::requirePermission('procurement')]);
 
 // Inventory (FIFO / FEFO Batches)

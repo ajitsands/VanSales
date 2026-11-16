@@ -13,7 +13,7 @@ import { GULF_INDIA_COUNTRY_CODES, getDefaultCountryCode, buildFullMobile, toWha
 import {
   Menu, X, Truck, MapPin, ShoppingBag, Package, ArrowRightLeft,
   AlertTriangle, Clock, LogOut, Printer, CheckCircle2, QrCode, CreditCard, Banknote, Plus, Minus, Trash2, BookOpen, Search, ShoppingCart, BarChart3, History, Share2,
-  LayoutDashboard, Calendar, Landmark, FileCheck2, ChevronRight, ChevronDown
+  LayoutDashboard, Calendar, Landmark, FileCheck2, ChevronRight, ChevronDown, Pencil
 } from 'lucide-react';
 
 const localDateStr = (d = new Date()) => {
@@ -45,6 +45,9 @@ export default function VanDriverMobileApp() {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [toast, setToast] = useState(null);
+  const [priceModal, setPriceModal] = useState(null);
+  const [priceInput, setPriceInput] = useState('');
+  const [priceErr, setPriceErr] = useState('');
 
   const showToast = (type, text) => {
     if (!text) return;
@@ -320,17 +323,57 @@ export default function VanDriverMobileApp() {
   };
 
   const addToCart = (item) => {
+    const baseSelling = Number(item.selling_price);
     const exist = cart.find(c => c.item_id === item.item_id);
     if (exist) {
-      setCart(cart.map(c => c.item_id === item.item_id ? { ...c, qty: c.qty + 1, batches: item.van_batches || c.batches } : c));
+      setCart(cart.map(c => c.item_id === item.item_id ? { ...c, qty: c.qty + 1, batches: item.van_batches || c.batches, min_price: c.min_price ?? baseSelling } : c));
     } else {
-      setCart([...cart, { item_id: item.item_id, name: item.name, sku: item.sku, unit_price: Number(item.selling_price), batches: item.van_batches || [], qty: 1, return_condition: 'good' }]);
+      setCart([...cart, { item_id: item.item_id, name: item.name, sku: item.sku, unit_price: baseSelling, min_price: baseSelling, price_overridden: false, batches: item.van_batches || [], qty: 1, return_condition: 'good' }]);
     }
+  };
+
+  const openPriceModal = (cartItem) => {
+    const firstBatchPrice = Array.isArray(cartItem.batches) && cartItem.batches.length > 0 && cartItem.batches[0].selling_price != null
+      ? Number(cartItem.batches[0].selling_price)
+      : null;
+    const minAllowed = Number(cartItem.min_price ?? firstBatchPrice ?? cartItem.unit_price ?? 0);
+    setPriceModal({
+      item_id: cartItem.item_id,
+      name: cartItem.name,
+      sku: cartItem.sku,
+      qty: cartItem.qty,
+      min_price: minAllowed,
+      current_price: Number(cartItem.unit_price || minAllowed),
+    });
+    setPriceInput(Number(cartItem.unit_price || minAllowed).toFixed(3));
+    setPriceErr('');
+  };
+
+  const savePriceModal = (e) => {
+    e.preventDefault();
+    if (!priceModal) return;
+    const parsed = Number(priceInput);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setPriceErr('Please enter a valid selling price.');
+      return;
+    }
+    if (parsed < priceModal.min_price - 0.0001) {
+      setPriceErr(`Price cannot be less than selling price (${formatMoney(priceModal.min_price)}). You can only increase the price.`);
+      return;
+    }
+    setCart(cart.map(c => c.item_id === priceModal.item_id ? {
+      ...c,
+      unit_price: Number(parsed.toFixed(3)),
+      min_price: priceModal.min_price,
+      price_overridden: parsed > priceModal.min_price + 0.0005,
+    } : c));
+    setPriceModal(null);
+    setPriceErr('');
   };
 
   const vatRate = Number(vendor?.vat_percent || 10) / 100;
   const grossSum = cart.reduce((s, c) => (
-    invoiceType === 'sale'
+    invoiceType === 'sale' && !c.price_overridden
       ? s + calculateFifoLineBreakdown(c.qty, c.batches, c.unit_price).totalGross
       : s + c.qty * c.unit_price
   ), 0);
@@ -868,7 +911,29 @@ export default function VanDriverMobileApp() {
                         columns={[
                           { key: 'tx_date', label: 'Date', sortValue: (d) => d.tx_date, render: (d) => <span className="mono">{d.tx_date}</span> },
                           { key: 'bills', label: 'Bills', sortValue: (d) => Number(d.bills), render: (d) => <span className="mono">{d.bills}</span> },
-                          { key: 'sales_total', label: 'Sales', sortValue: (d) => Number(d.sales_total), render: (d) => <span className="mono">{formatMoney(d.sales_total)}</span> },
+                          {
+                            key: 'sales_total',
+                            label: 'Sales',
+                            sortValue: (d) => Number(d.sales_total),
+                            render: (d) => (
+                              <div>
+                                <div className="mono" style={{ fontWeight: 700 }}>{formatMoney(d.sales_total)}</div>
+                                {Number(d.markup_total || 0) > 0.0005 && (
+                                  <div className="mono" style={{ fontSize: 10, color: '#059669', fontWeight: 700 }}>
+                                    +{formatMoney(d.markup_total)} Extra
+                                  </div>
+                                )}
+                              </div>
+                            ),
+                          },
+                          {
+                            key: 'markup_total',
+                            label: 'Markup (+)',
+                            sortValue: (d) => Number(d.markup_total || 0),
+                            render: (d) => Number(d.markup_total || 0) > 0.0005
+                              ? <span className="badge badge-emerald mono">+{formatMoney(d.markup_total)}</span>
+                              : <span className="mono" style={{ color: '#94a3b8' }}>-</span>,
+                          },
                           { key: 'collected_total', label: 'Collected', sortValue: (d) => Number(d.collected_total), render: (d) => <span className="mono" style={{ color: '#059669', fontWeight: 700 }}>{formatMoney(d.collected_total)}</span> },
                         ]}
                       />
@@ -1589,13 +1654,32 @@ export default function VanDriverMobileApp() {
                     ) : (
                       <>
                         {cart.map(c => {
-                          const bd = invoiceType === 'sale'
+                          const bd = invoiceType === 'sale' && !c.price_overridden
                             ? calculateFifoLineBreakdown(c.qty, c.batches, c.unit_price)
                             : { totalGross: c.qty * c.unit_price, hasMultiplePrices: false, slices: [] };
+                          const baseMinPrice = Number(c.min_price ?? c.unit_price);
+                          const hasMarkup = c.price_overridden && Number(c.unit_price) > baseMinPrice + 0.0005;
                           return (
                           <div key={c.item_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid #f1f5f9', gap: 6 }}>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 12, fontWeight: 700 }}>{c.name}</div>
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => openPriceModal(c)}
+                              onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') openPriceModal(c); }}
+                              style={{ flex: 1, minWidth: 0, cursor: 'pointer', padding: '2px 4px', borderRadius: 6 }}
+                              title="Tap to increase selling price"
+                            >
+                              <div style={{ fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                                <span>{c.name}</span>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 10, color: '#2563eb', fontWeight: 600 }}>
+                                  <Pencil size={10} /> Price
+                                </span>
+                                {hasMarkup && (
+                                  <span className="badge badge-emerald mono" style={{ fontSize: 9.5 }}>
+                                    +{formatMoney(Number(c.unit_price) - baseMinPrice)}
+                                  </span>
+                                )}
+                              </div>
                               <div className="mono" style={{ fontSize: 10.5, color: '#64748b' }}>
                                 {bd.hasMultiplePrices
                                   ? <>Batch Split = <strong>{formatMoney(bd.totalGross)}</strong></>
@@ -2630,6 +2714,96 @@ export default function VanDriverMobileApp() {
           </div>
         </div>
       )}
+      {priceModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.55)',
+            zIndex: 1150,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+          onClick={() => setPriceModal(null)}
+        >
+          <form
+            onSubmit={savePriceModal}
+            className="card"
+            style={{
+              width: '100%',
+              maxWidth: 380,
+              margin: 0,
+              boxShadow: '0 20px 45px rgba(15, 23, 42, 0.28)',
+              borderTop: '4px solid #2563eb',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 15, color: '#0f172a' }}>Adjust Selling Price</div>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: '#1e40af', marginTop: 2 }}>{priceModal.name}</div>
+                <div className="mono" style={{ fontSize: 11, color: '#64748b' }}>{priceModal.sku} &bull; Qty: {priceModal.qty}</div>
+              </div>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => setPriceModal(null)}>
+                <X size={14} />
+              </button>
+            </div>
+
+            <div style={{ padding: '8px 10px', borderRadius: 8, background: '#f8fafc', border: '1px solid #e2e8f0', marginBottom: 10, fontSize: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: '#475569' }}>Minimum Selling Price:</span>
+                <strong className="mono" style={{ color: '#0f172a' }}>{formatMoney(priceModal.min_price)}</strong>
+              </div>
+              {Number(priceInput) > priceModal.min_price + 0.0005 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                  <span style={{ color: '#065f46', fontWeight: 600 }}>Extra Markup / Unit:</span>
+                  <strong className="mono" style={{ color: '#059669' }}>+{formatMoney(Number(priceInput) - priceModal.min_price)}</strong>
+                </div>
+              )}
+            </div>
+
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label className="form-label">New Selling Price ({vendor?.currency || 'BHD'})</label>
+              <input
+                type="number"
+                step="0.001"
+                min={priceModal.min_price}
+                className="form-control mono"
+                autoFocus
+                value={priceInput}
+                onChange={(e) => {
+                  setPriceInput(e.target.value);
+                  setPriceErr('');
+                }}
+              />
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                Cannot be less than {formatMoney(priceModal.min_price)}. You can increase the price and sell.
+              </div>
+            </div>
+
+            {priceErr && (
+              <div style={{ padding: '7px 10px', borderRadius: 7, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 12, fontWeight: 600, marginBottom: 10 }}>
+                {priceErr}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, fontSize: 12.5 }}>
+              <span style={{ color: '#475569' }}>Updated Line Total:</span>
+              <strong className="mono" style={{ fontSize: 14, color: '#0f172a' }}>
+                {formatMoney((Number(priceInput) || 0) * Number(priceModal.qty || 1))}
+              </strong>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => setPriceModal(null)}>Cancel</button>
+              <button type="submit" className="btn btn-primary btn-sm">Apply Price</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {toast && (
         <div
           role="status"

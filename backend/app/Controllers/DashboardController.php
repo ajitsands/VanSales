@@ -435,13 +435,21 @@ class DashboardController
             SELECT DATE(inv.created_at) AS tx_date,
                    COUNT(CASE WHEN inv.invoice_type='sale' THEN 1 END) AS bills,
                    COALESCE(SUM(CASE WHEN inv.invoice_type='sale' THEN inv.total_amount ELSE 0 END), 0) AS sales_total,
-                   COALESCE((SELECT SUM(p.amount) FROM invoice_payments p WHERE p.van_id = ? AND DATE(p.paid_at) = DATE(inv.created_at) AND p.payment_method IN ('cash','card','qr_pay','bank_transfer')), 0) AS collected_total
+                   COALESCE((SELECT SUM(p.amount) FROM invoice_payments p WHERE p.van_id = ? AND DATE(p.paid_at) = DATE(inv.created_at) AND p.payment_method IN ('cash','card','qr_pay','bank_transfer')), 0) AS collected_total,
+                   COALESCE((
+                       SELECT SUM(GREATEST(0, (l.unit_price - COALESCE(b.selling_price, i.selling_price)) * l.qty))
+                       FROM invoice_lines l
+                       INNER JOIN invoices inv2 ON inv2.id = l.invoice_id
+                       INNER JOIN items i ON i.id = l.item_id
+                       LEFT JOIN stock_batches b ON b.id = l.batch_id
+                       WHERE inv2.vendor_id = ? AND inv2.van_id = ? AND inv2.invoice_type = 'sale' AND DATE(inv2.created_at) = DATE(inv.created_at)
+                   ), 0) AS markup_total
             FROM invoices inv
             WHERE inv.vendor_id = ? AND inv.van_id = ? AND DATE(inv.created_at) BETWEEN ? AND ?
             GROUP BY DATE(inv.created_at)
             ORDER BY tx_date DESC
         ");
-        $dailyStmt->execute([$vanId, $vendorId, $vanId, $fromDate, $toDate]);
+        $dailyStmt->execute([$vanId, $vendorId, $vanId, $vendorId, $vanId, $fromDate, $toDate]);
         $dailyBreakdown = $dailyStmt->fetchAll();
 
         // 4. Outstanding Cheque Status & Shop Outstanding Amount Aging
@@ -532,9 +540,11 @@ class DashboardController
 
         $lStmt = $pdo->prepare("
             SELECT l.id, l.item_id, i.sku, i.name AS item_name, i.uom, l.batch_no, l.expiry_date,
-                   l.qty, l.unit_price, l.unit_cost, l.line_vat, l.line_total
+                   l.qty, l.unit_price, l.unit_cost, l.line_vat, l.line_total,
+                   COALESCE(b.selling_price, i.selling_price) AS standard_price
             FROM invoice_lines l
             INNER JOIN items i ON i.id = l.item_id
+            LEFT JOIN stock_batches b ON b.id = l.batch_id
             WHERE l.invoice_id = ?
             ORDER BY l.id ASC
         ");
@@ -624,6 +634,244 @@ class DashboardController
             'from_date' => $fromDate,
             'to_date'   => $toDate,
             'shops'     => $shops,
+        ]);
+    }
+
+    public function vanSalesReport(Request $req): void
+    {
+        $pdo = Database::getConnection();
+        $vendorId = (int)$req->user['vendor_id'];
+        [$fromDate, $toDate] = $this->normalizeDateRange($req);
+
+        $rawFromTime = trim((string)($req->query('from_time') ?? '00:00:00'));
+        $rawToTime = trim((string)($req->query('to_time') ?? '23:59:59'));
+        $fromTime = preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $rawFromTime)
+            ? (strlen($rawFromTime) === 5 ? $rawFromTime . ':00' : $rawFromTime)
+            : '00:00:00';
+        $toTime = preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $rawToTime)
+            ? (strlen($rawToTime) === 5 ? $rawToTime . ':59' : $rawToTime)
+            : '23:59:59';
+
+        $fromDt = $fromDate . ' ' . $fromTime;
+        $toDt = $toDate . ' ' . $toTime;
+        if ($fromDt > $toDt) {
+            [$fromDt, $toDt] = [$toDt, $fromDt];
+        }
+
+        $vanId = (int)($req->query('van_id') ?? 0);
+
+        $vansStmt = $pdo->prepare("SELECT id, van_code, van_name, plate_number FROM vans WHERE vendor_id = ? ORDER BY van_name ASC");
+        $vansStmt->execute([$vendorId]);
+        $vans = $vansStmt->fetchAll();
+
+        $sql = "
+            SELECT inv.id, inv.invoice_no, inv.invoice_type, inv.vat_mode, inv.van_id, inv.shop_id,
+                   inv.customer_name, inv.subtotal, inv.vat_amount, inv.discount_amount, inv.total_amount,
+                   inv.total_cogs, inv.net_profit, inv.is_corrected, inv.created_at,
+                   v.van_name, v.plate_number,
+                   s.shop_code, s.shop_name, s.phone AS shop_phone,
+                   r.route_name,
+                   COALESCE((SELECT SUM(sle.debit - sle.credit) FROM shop_ledger_entries sle WHERE sle.vendor_id = inv.vendor_id AND sle.shop_id = inv.shop_id), 0) AS ledger_balance
+            FROM invoices inv
+            INNER JOIN vans v ON v.id = inv.van_id
+            LEFT JOIN shops s ON s.id = inv.shop_id
+            LEFT JOIN routes r ON r.id = s.route_id
+            WHERE inv.vendor_id = ?
+              AND inv.van_id IS NOT NULL
+              AND inv.created_at BETWEEN ? AND ?
+        ";
+        $params = [$vendorId, $fromDt, $toDt];
+        if ($vanId > 0) {
+            $sql .= " AND inv.van_id = ?";
+            $params[] = $vanId;
+        }
+        $sql .= " ORDER BY inv.created_at DESC, inv.id DESC";
+
+        $invStmt = $pdo->prepare($sql);
+        $invStmt->execute($params);
+        $invoices = $invStmt->fetchAll();
+
+        $lStmt = $pdo->prepare("
+            SELECT l.id, l.item_id, i.sku, i.name AS item_name, i.uom, l.batch_no, l.expiry_date,
+                   l.qty, l.unit_price, l.unit_cost, l.line_vat, l.line_total,
+                   COALESCE(b.selling_price, i.selling_price) AS standard_price,
+                   GREATEST(0, (l.unit_price - COALESCE(b.selling_price, i.selling_price)) * l.qty) AS line_markup
+            FROM invoice_lines l
+            INNER JOIN items i ON i.id = l.item_id
+            LEFT JOIN stock_batches b ON b.id = l.batch_id
+            WHERE l.invoice_id = ?
+            ORDER BY l.id ASC
+        ");
+        $pStmt = $pdo->prepare("
+            SELECT id, payment_method, amount, reference_no, bank_name, cheque_no, cheque_date, cheque_status, paid_at
+            FROM invoice_payments
+            WHERE invoice_id = ?
+            ORDER BY id ASC
+        ");
+
+        $summary = [
+            'total_bills'            => 0,
+            'total_returns'          => 0,
+            'shops_served'           => 0,
+            'sales_total'            => 0.0,
+            'returns_total'          => 0.0,
+            'net_sales'              => 0.0,
+            'markup_total'           => 0.0,
+            'net_profit'             => 0.0,
+            'collected_total'        => 0.0,
+            'cash_total'             => 0.0,
+            'card_total'             => 0.0,
+            'qr_total'               => 0.0,
+            'bank_transfer_total'    => 0.0,
+            'cheque_total'           => 0.0,
+            'credit_total'           => 0.0,
+            'total_shop_outstanding' => 0.0,
+        ];
+
+        $shopMap = [];
+        $seenLedgerShops = [];
+
+        foreach ($invoices as $inv) {
+            $vid = (int)$inv['van_id'];
+            $sid = (int)($inv['shop_id'] ?: 0);
+            $key = $vid . '_' . $sid;
+
+            if (!isset($shopMap[$key])) {
+                $ledgerBal = $sid > 0 ? round((float)($inv['ledger_balance'] ?? 0), 3) : 0.0;
+                $shopMap[$key] = [
+                    'key'                 => $key,
+                    'van_id'              => $vid,
+                    'van_name'            => $inv['van_name'],
+                    'plate_number'        => $inv['plate_number'] ?? '',
+                    'driver_name'         => '',
+                    'shop_id'             => $sid,
+                    'shop_code'           => $inv['shop_code'] ?: ($sid > 0 ? 'SHOP-' . $sid : 'WALK-IN'),
+                    'shop_name'           => $inv['shop_name'] ?: ($inv['customer_name'] ?: 'Walk-In Customer'),
+                    'phone'               => $inv['shop_phone'] ?? '',
+                    'route_name'          => $inv['route_name'] ?: 'Direct / Other',
+                    'ledger_balance'      => $ledgerBal,
+                    'bill_count'          => 0,
+                    'return_count'        => 0,
+                    'sales_total'         => 0.0,
+                    'returns_total'       => 0.0,
+                    'net_sales'           => 0.0,
+                    'markup_total'        => 0.0,
+                    'net_profit'          => 0.0,
+                    'cash_total'          => 0.0,
+                    'card_total'          => 0.0,
+                    'qr_total'            => 0.0,
+                    'bank_transfer_total' => 0.0,
+                    'cheque_total'        => 0.0,
+                    'credit_total'        => 0.0,
+                    'collected_total'     => 0.0,
+                    'invoices'            => [],
+                ];
+                if ($sid > 0 && !isset($seenLedgerShops[$sid])) {
+                    $seenLedgerShops[$sid] = true;
+                    $summary['total_shop_outstanding'] = round($summary['total_shop_outstanding'] + $ledgerBal, 3);
+                }
+            }
+
+            $lStmt->execute([$inv['id']]);
+            $inv['lines'] = $lStmt->fetchAll();
+            $pStmt->execute([$inv['id']]);
+            $inv['payments'] = $pStmt->fetchAll();
+
+            $invMarkup = 0.0;
+            if ($inv['invoice_type'] === 'sale') {
+                foreach ($inv['lines'] as $ln) {
+                    $invMarkup += (float)($ln['line_markup'] ?? 0);
+                }
+                $invMarkup = round($invMarkup, 3);
+                $shopMap[$key]['bill_count']++;
+                $shopMap[$key]['sales_total'] = round($shopMap[$key]['sales_total'] + (float)$inv['total_amount'], 3);
+                $shopMap[$key]['markup_total'] = round($shopMap[$key]['markup_total'] + $invMarkup, 3);
+                $summary['total_bills']++;
+                $summary['sales_total'] = round($summary['sales_total'] + (float)$inv['total_amount'], 3);
+                $summary['markup_total'] = round($summary['markup_total'] + $invMarkup, 3);
+            } else {
+                $shopMap[$key]['return_count']++;
+                $shopMap[$key]['returns_total'] = round($shopMap[$key]['returns_total'] + (float)$inv['total_amount'], 3);
+                $summary['total_returns']++;
+                $summary['returns_total'] = round($summary['returns_total'] + (float)$inv['total_amount'], 3);
+            }
+            $inv['markup_total'] = $invMarkup;
+
+            $shopMap[$key]['net_sales'] = round($shopMap[$key]['sales_total'] - $shopMap[$key]['returns_total'], 3);
+            $shopMap[$key]['net_profit'] = round($shopMap[$key]['net_profit'] + (float)$inv['net_profit'], 3);
+            $summary['net_profit'] = round($summary['net_profit'] + (float)$inv['net_profit'], 3);
+
+            foreach ($inv['payments'] as $pm) {
+                $amt = (float)$pm['amount'];
+                $m = $pm['payment_method'];
+                if ($m === 'cash') {
+                    $shopMap[$key]['cash_total'] = round($shopMap[$key]['cash_total'] + $amt, 3);
+                    $shopMap[$key]['collected_total'] = round($shopMap[$key]['collected_total'] + $amt, 3);
+                    $summary['cash_total'] = round($summary['cash_total'] + $amt, 3);
+                    $summary['collected_total'] = round($summary['collected_total'] + $amt, 3);
+                } elseif ($m === 'card') {
+                    $shopMap[$key]['card_total'] = round($shopMap[$key]['card_total'] + $amt, 3);
+                    $shopMap[$key]['collected_total'] = round($shopMap[$key]['collected_total'] + $amt, 3);
+                    $summary['card_total'] = round($summary['card_total'] + $amt, 3);
+                    $summary['collected_total'] = round($summary['collected_total'] + $amt, 3);
+                } elseif ($m === 'qr_pay') {
+                    $shopMap[$key]['qr_total'] = round($shopMap[$key]['qr_total'] + $amt, 3);
+                    $shopMap[$key]['collected_total'] = round($shopMap[$key]['collected_total'] + $amt, 3);
+                    $summary['qr_total'] = round($summary['qr_total'] + $amt, 3);
+                    $summary['collected_total'] = round($summary['collected_total'] + $amt, 3);
+                } elseif ($m === 'bank_transfer') {
+                    $shopMap[$key]['bank_transfer_total'] = round($shopMap[$key]['bank_transfer_total'] + $amt, 3);
+                    $shopMap[$key]['collected_total'] = round($shopMap[$key]['collected_total'] + $amt, 3);
+                    $summary['bank_transfer_total'] = round($summary['bank_transfer_total'] + $amt, 3);
+                    $summary['collected_total'] = round($summary['collected_total'] + $amt, 3);
+                } elseif ($m === 'cheque') {
+                    $shopMap[$key]['cheque_total'] = round($shopMap[$key]['cheque_total'] + $amt, 3);
+                    $summary['cheque_total'] = round($summary['cheque_total'] + $amt, 3);
+                } elseif ($m === 'credit') {
+                    $shopMap[$key]['credit_total'] = round($shopMap[$key]['credit_total'] + $amt, 3);
+                    $summary['credit_total'] = round($summary['credit_total'] + $amt, 3);
+                }
+            }
+
+            $shopMap[$key]['invoices'][] = $inv;
+        }
+
+        $summary['net_sales'] = round($summary['sales_total'] - $summary['returns_total'], 3);
+        $shops = array_values($shopMap);
+        $summary['shops_served'] = count($shops);
+        usort($shops, fn($a, $b) => $b['sales_total'] <=> $a['sales_total']);
+
+        $agingAndCheques = $this->computeAgingAndCheques($pdo, $vendorId, $vanId > 0 ? $vanId : null);
+        $agingByShop = [];
+        foreach ($agingAndCheques['aging_shops'] as $as) {
+            $agingByShop[(int)$as['shop_id']] = $as;
+        }
+        foreach ($shops as &$sh) {
+            $ag = $agingByShop[(int)$sh['shop_id']] ?? null;
+            $sh['bucket_0_7'] = $ag ? (float)$ag['bucket_0_7'] : 0.0;
+            $sh['bucket_8_15'] = $ag ? (float)$ag['bucket_8_15'] : 0.0;
+            $sh['bucket_16_30'] = $ag ? (float)$ag['bucket_16_30'] : 0.0;
+            $sh['bucket_31_plus'] = $ag ? (float)$ag['bucket_31_plus'] : 0.0;
+            $sh['oldest_days'] = $ag ? (int)$ag['oldest_days'] : 0;
+            $sh['pending_cheques'] = $ag ? (float)$ag['pending_cheques'] : 0.0;
+        }
+        unset($sh);
+
+        Response::ok([
+            'from_date'           => $fromDate,
+            'to_date'             => $toDate,
+            'from_time'           => substr($fromTime, 0, 5),
+            'to_time'             => substr($toTime, 0, 5),
+            'from_datetime'       => $fromDt,
+            'to_datetime'         => $toDt,
+            'van_id'              => $vanId,
+            'vans'                => $vans,
+            'summary'             => $summary,
+            'shops'               => $shops,
+            'aging_totals'        => $agingAndCheques['aging_totals'],
+            'aging_shops'         => $agingAndCheques['aging_shops'],
+            'cheque_summary'      => $agingAndCheques['cheque_summary'],
+            'outstanding_cheques' => $agingAndCheques['outstanding_cheques'],
         ]);
     }
 }

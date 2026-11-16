@@ -1143,6 +1143,22 @@ export default function MainStorePosPage() {
           w.document.write(`
             <html><head><title>Statement - ${ledgerModal.customer?.customer_name}</title>
             <style>
+              @page {
+                size: A4;
+                margin: 14mm 12mm 16mm 12mm;
+                @bottom-right {
+                  content: "Page " counter(page) " of " counter(pages);
+                  font-family: Arial, sans-serif;
+                  font-size: 10px;
+                  color: #475569;
+                }
+                @bottom-left {
+                  content: "${(vendor?.company_name || 'VanSales').replace(/"/g, '\\"')} — Statement";
+                  font-family: Arial, sans-serif;
+                  font-size: 10px;
+                  color: #64748b;
+                }
+              }
               body { font-family: Arial, sans-serif; padding: 24px; color: #0f172a; }
               h2 { margin: 0 0 4px; }
               .meta { font-size: 12px; color: #475569; margin-bottom: 14px; }

@@ -539,14 +539,31 @@ class TransferController
         Response::ok($rows);
     }
 
+    private static function ensureReturnDamageLocationColumns(\PDO $pdo): void
+    {
+        try {
+            $col = $pdo->query("SHOW COLUMNS FROM van_returns_damages LIKE 'van_id'")->fetch();
+            if ($col && strtoupper((string)($col['Null'] ?? 'NO')) === 'NO') {
+                $pdo->exec("ALTER TABLE van_returns_damages MODIFY COLUMN van_id INT NULL");
+            }
+            $locCol = $pdo->query("SHOW COLUMNS FROM van_returns_damages LIKE 'location_type'")->fetch();
+            if (!$locCol) {
+                $pdo->exec("ALTER TABLE van_returns_damages ADD COLUMN location_type VARCHAR(20) NOT NULL DEFAULT 'van' AFTER vendor_id");
+            }
+        } catch (Throwable $e) {
+            // ignore if already compatible
+        }
+    }
+
     public function listReturnsDamages(Request $req): void
     {
         $vendorId = (int)$req->user['vendor_id'];
         $pdo = Database::getConnection();
+        self::ensureReturnDamageLocationColumns($pdo);
         $sql = "
-            SELECT d.*, v.van_name, i.sku, i.name AS item_name, u.full_name AS reported_by_name
+            SELECT d.*, COALESCE(v.van_name, 'Main Store') AS van_name, i.sku, i.name AS item_name, u.full_name AS reported_by_name
             FROM van_returns_damages d
-            INNER JOIN vans v ON v.id = d.van_id
+            LEFT JOIN vans v ON v.id = d.van_id
             INNER JOIN items i ON i.id = d.item_id
             LEFT JOIN users u ON u.id = d.reported_by
             WHERE d.vendor_id = ?
@@ -566,32 +583,38 @@ class TransferController
     {
         $vendorId = (int)$req->user['vendor_id'];
         $b = $req->body();
-        $vanId = $req->user['role'] === 'van' ? (int)$req->user['van_id'] : (int)($b['van_id'] ?? 0);
+        $locationType = ($b['location_type'] ?? 'van') === 'main_store' && $req->user['role'] !== 'van' ? 'main_store' : 'van';
+        $vanId = $locationType === 'main_store'
+            ? null
+            : ($req->user['role'] === 'van' ? (int)$req->user['van_id'] : (int)($b['van_id'] ?? 0));
         $itemId = (int)($b['item_id'] ?? 0);
         $qty = (float)($b['qty'] ?? 0);
         $returnType = in_array($b['return_type'] ?? '', ['good_return', 'damaged', 'expired'], true) ? $b['return_type'] : 'damaged';
 
-        if (!$vanId || !$itemId || $qty <= 0) {
-            Response::error('Van, item, and positive quantity are required', 422);
+        if (($locationType === 'van' && !$vanId) || !$itemId || $qty <= 0) {
+            Response::error('Source location/Van, item, and positive quantity are required', 422);
         }
 
         $pdo = Database::getConnection();
+        self::ensureReturnDamageLocationColumns($pdo);
         try {
             $pdo->beginTransaction();
-            $slices = InventoryModel::consumeFifoFefo($pdo, $vendorId, 'van', $vanId, $itemId, $qty);
+            $slices = InventoryModel::consumeFifoFefo($pdo, $vendorId, $locationType, $vanId, $itemId, $qty);
             $ins = $pdo->prepare("
-                INSERT INTO van_returns_damages (vendor_id, van_id, item_id, batch_id, batch_no, expiry_date, qty, unit_cost, return_type, reason_code, notes, reported_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO van_returns_damages (vendor_id, location_type, van_id, item_id, batch_id, batch_no, expiry_date, qty, unit_cost, return_type, reason_code, notes, reported_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
+            $defaultReason = $locationType === 'main_store' ? 'Store Damage' : ($returnType === 'good_return' ? 'Van Return' : 'Transit Damage');
             foreach ($slices as $sl) {
                 $ins->execute([
-                    $vendorId, $vanId, $itemId, $sl['batch_id'], $sl['batch_no'], $sl['expiry_date'],
-                    $sl['qty'], $sl['unit_cost'], $returnType, trim($b['reason_code'] ?? 'Transit Damage'),
+                    $vendorId, $locationType, $vanId, $itemId, $sl['batch_id'], $sl['batch_no'], $sl['expiry_date'],
+                    $sl['qty'], $sl['unit_cost'], $returnType, trim($b['reason_code'] ?? $defaultReason),
                     trim($b['notes'] ?? ''), $req->user['id'],
                 ]);
             }
             $pdo->commit();
-            Response::ok(null, 'Return / Damage logged and deducted from Van stock', 201);
+            $locLabel = $locationType === 'main_store' ? 'Main Store' : 'Van';
+            Response::ok(null, "Return / Damage logged and deducted from {$locLabel} stock", 201);
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();

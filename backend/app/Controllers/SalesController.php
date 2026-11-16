@@ -134,6 +134,9 @@ class SalesController
                     $firstSlicePrice = isset($slices[0]['selling_price']) && $slices[0]['selling_price'] !== null
                         ? (float)$slices[0]['selling_price']
                         : $catalogPrice;
+                    if ($reqUnitPrice !== null && $reqUnitPrice < ($firstSlicePrice - 0.0005)) {
+                        throw new \RuntimeException("Selling price for {$item['name']} cannot be less than " . number_format($firstSlicePrice, 3));
+                    }
                     $isCustomPrice = $reqUnitPrice !== null
                         && abs($reqUnitPrice - $firstSlicePrice) > 0.0005
                         && abs($reqUnitPrice - $catalogPrice) > 0.0005;

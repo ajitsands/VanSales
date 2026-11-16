@@ -1,0 +1,21 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+  # Route API requests to backend/public/index.php
+  RewriteRule ^api(/.*)?$ backend/public/index.php [QSA,L]
+
+  # Route uploaded files to backend/public/uploads
+  RewriteRule ^uploads/(.*)$ backend/public/uploads/$1 [L]
+
+  # Serve built frontend assets from frontend/dist
+  RewriteRule ^assets/(.*)$ frontend/dist/assets/$1 [L]
+
+  # Serve existing files/directories directly
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Fallback all SPA routes to frontend/dist/index.html
+  RewriteRule ^ frontend/dist/index.html [L]
+</IfModule>

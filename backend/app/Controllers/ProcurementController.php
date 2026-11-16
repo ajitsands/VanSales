@@ -15,28 +15,7 @@ class ProcurementController
         $pdo = Database::getConnection();
         $stmt = $pdo->prepare("SELECT * FROM suppliers WHERE vendor_id = ? ORDER BY id DESC");
         $stmt->execute([$vendorId]);
-        $rows = $stmt->fetchAll();
-
-        $bStmt = $pdo->prepare("
-            SELECT item_id, batch_no, qty_available, selling_price, expiry_date
-            FROM stock_batches
-            WHERE vendor_id = ? AND location_type = 'main_store' AND qty_available > 0
-            ORDER BY CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END, expiry_date ASC, received_at ASC, id ASC
-        ");
-        $bStmt->execute([$vendorId]);
-        $batchesByItem = [];
-        foreach ($bStmt->fetchAll() as $b) {
-            $batchesByItem[(int)$b['item_id']][] = [
-                'batch_no'      => $b['batch_no'],
-                'qty_available' => (float)$b['qty_available'],
-                'selling_price' => $b['selling_price'] !== null ? (float)$b['selling_price'] : null,
-                'expiry_date'   => $b['expiry_date'],
-            ];
-        }
-        foreach ($rows as &$r) {
-            $r['main_store_batches'] = $batchesByItem[(int)$r['id']] ?? [];
-        }
-        Response::ok($rows);
+        Response::ok($stmt->fetchAll());
     }
 
     public function createSupplier(Request $req): void
@@ -179,25 +158,106 @@ class ProcurementController
         $rows = $stmt->fetchAll();
 
         $bStmt = $pdo->prepare("
-            SELECT item_id, batch_no, qty_available, selling_price, expiry_date
-            FROM stock_batches
-            WHERE vendor_id = ? AND location_type = 'main_store' AND qty_available > 0
-            ORDER BY CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END, expiry_date ASC, received_at ASC, id ASC
+            SELECT b.id, b.grn_id, b.item_id, b.batch_no, b.qty_initial, b.qty_available, b.unit_cost, b.selling_price, b.expiry_date,
+                   i.sku, i.name AS item_name, i.uom
+            FROM stock_batches b
+            INNER JOIN items i ON i.id = b.item_id
+            WHERE b.vendor_id = ? AND b.grn_id IS NOT NULL
+            ORDER BY b.id ASC
         ");
         $bStmt->execute([$vendorId]);
-        $batchesByItem = [];
+        $itemsByGrn = [];
         foreach ($bStmt->fetchAll() as $b) {
-            $batchesByItem[(int)$b['item_id']][] = [
+            $gid = (int)$b['grn_id'];
+            $qtyRec = (float)$b['qty_initial'];
+            $uCost = (float)$b['unit_cost'];
+            $itemsByGrn[$gid][] = [
+                'id'            => (int)$b['id'],
+                'item_id'       => (int)$b['item_id'],
+                'sku'           => $b['sku'],
+                'item_name'     => $b['item_name'],
+                'uom'           => $b['uom'] ?: 'PCS',
                 'batch_no'      => $b['batch_no'],
-                'qty_available' => (float)$b['qty_available'],
-                'selling_price' => $b['selling_price'] !== null ? (float)$b['selling_price'] : null,
                 'expiry_date'   => $b['expiry_date'],
+                'qty_received'  => $qtyRec,
+                'qty_available' => (float)$b['qty_available'],
+                'unit_cost'     => $uCost,
+                'selling_price' => $b['selling_price'] !== null ? (float)$b['selling_price'] : null,
+                'line_total'    => round($qtyRec * $uCost, 3),
             ];
         }
         foreach ($rows as &$r) {
-            $r['main_store_batches'] = $batchesByItem[(int)$r['id']] ?? [];
+            $grnItems = $itemsByGrn[(int)$r['id']] ?? [];
+            $r['items'] = $grnItems;
+            $r['item_count'] = count($grnItems);
+            $r['total_qty'] = array_reduce($grnItems, fn($s, $x) => $s + (float)$x['qty_received'], 0.0);
         }
         Response::ok($rows);
+    }
+
+    public function updateGrnItem(Request $req): void
+    {
+        $vendorId = (int)$req->user['vendor_id'];
+        $grnId = (int)($req->params['grn_id'] ?? 0);
+        $batchId = (int)($req->params['batch_id'] ?? 0);
+        $b = $req->body();
+
+        $newQty = (float)($b['qty_received'] ?? 0);
+        $newUnitCost = (float)($b['unit_cost'] ?? -1);
+        $rawSell = $b['selling_price'] ?? null;
+        $newSellingPrice = ($rawSell !== null && $rawSell !== '') ? (float)$rawSell : null;
+
+        if ($newQty <= 0 || $newUnitCost < 0 || ($newSellingPrice !== null && $newSellingPrice < 0)) {
+            Response::error('Valid positive Qty Received and non-negative Unit Cost / Selling Price are required', 422);
+        }
+
+        $pdo = Database::getConnection();
+        InventoryModel::ensureSellingPriceColumn($pdo);
+
+        $stmt = $pdo->prepare("SELECT * FROM stock_batches WHERE id = ? AND grn_id = ? AND vendor_id = ? LIMIT 1");
+        $stmt->execute([$batchId, $grnId, $vendorId]);
+        $batch = $stmt->fetch();
+        if (!$batch) {
+            Response::error('GRN batch item not found', 404);
+        }
+
+        $consumed = max(0.0, (float)$batch['qty_initial'] - (float)$batch['qty_available']);
+        $newAvail = round($newQty - $consumed, 3);
+        if ($newAvail < -0.0001) {
+            Response::error('Cannot reduce Qty Received below already sold/transferred quantity (' . number_format($consumed, 2) . ')', 422);
+        }
+        $newAvail = max(0.0, $newAvail);
+
+        try {
+            $pdo->beginTransaction();
+            $pdo->prepare("
+                UPDATE stock_batches
+                SET qty_initial = ?, qty_available = ?, unit_cost = ?, selling_price = ?
+                WHERE id = ? AND vendor_id = ?
+            ")->execute([
+                round($newQty, 3),
+                $newAvail,
+                round($newUnitCost, 3),
+                $newSellingPrice !== null ? round($newSellingPrice, 3) : null,
+                $batchId,
+                $vendorId,
+            ]);
+
+            $tStmt = $pdo->prepare("SELECT COALESCE(SUM(qty_initial * unit_cost), 0) FROM stock_batches WHERE grn_id = ? AND vendor_id = ?");
+            $tStmt->execute([$grnId, $vendorId]);
+            $newGrnTotal = round((float)$tStmt->fetchColumn(), 3);
+
+            $pdo->prepare("UPDATE grn_headers SET total_cost = ? WHERE id = ? AND vendor_id = ?")
+                ->execute([$newGrnTotal, $grnId, $vendorId]);
+
+            $pdo->commit();
+            Response::ok(['batch_id' => $batchId, 'grn_id' => $grnId, 'total_cost' => $newGrnTotal], 'GRN item updated');
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            Response::error('Failed to update GRN item: ' . $e->getMessage(), 400);
+        }
     }
 
     private static function getNextBatchSeq(\PDO $pdo, int $vendorId, string $datePart, string $supCode): int

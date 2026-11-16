@@ -40,7 +40,39 @@ export default function PublicShareView({ token }) {
 
   return (
     <div style={{ minHeight: '100vh', background: '#f1f5f9', padding: '16px 12px' }}>
-      <div style={{ maxWidth: 760, margin: '0 auto', background: '#ffffff', borderRadius: 12, border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 16px rgba(15,23,42,0.06)' }}>
+      <style>{`
+        @page {
+          size: A4;
+          margin: 14mm 12mm 16mm 12mm;
+          @bottom-right {
+            content: "Page " counter(page) " of " counter(pages);
+            font-family: Arial, sans-serif;
+            font-size: 10px;
+            color: #475569;
+          }
+          @bottom-left {
+            content: "${(vendor.company_name || 'VanSales').replace(/"/g, '\\"')}";
+            font-family: Arial, sans-serif;
+            font-size: 10px;
+            color: #64748b;
+          }
+        }
+        @media print {
+          .public-print-doc, .public-print-doc * { visibility: visible !important; }
+          .public-print-doc {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            max-width: none !important;
+            box-shadow: none !important;
+            border: none !important;
+            border-radius: 0 !important;
+          }
+          .no-print { display: none !important; }
+        }
+      `}</style>
+      <div className="public-print-doc" style={{ maxWidth: 760, margin: '0 auto', background: '#ffffff', borderRadius: 12, border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 16px rgba(15,23,42,0.06)' }}>
         <div style={{ background: vendor.header_color || '#0f2942', color: '#ffffff', padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
           <div>
             <div style={{ fontSize: 17, fontWeight: 800 }}>{vendor.company_name || 'Van Supply & Distribution'}</div>
@@ -48,7 +80,7 @@ export default function PublicShareView({ token }) {
               {data.share_type === 'ledger' ? <><BookOpen size={13} /> Customer Ledger Statement</> : <><FileText size={13} /> Tax Invoice / Bill</>}
             </div>
           </div>
-          <button type="button" className="btn btn-sm" style={{ background: '#ffffff', color: '#0f172a', fontWeight: 700 }} onClick={() => window.print()}>
+          <button type="button" className="btn btn-sm no-print" style={{ background: '#ffffff', color: '#0f172a', fontWeight: 700 }} onClick={() => window.print()}>
             <Printer size={14} /> Print / Save PDF
           </button>
         </div>
