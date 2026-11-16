@@ -1493,7 +1493,7 @@ export default function VanDriverMobileApp() {
           {/* TAB: TODAY'S SHOP-WISE SALES & COLLECTION REPORT */}
           {activeTab === 'today_report' && (() => {
             const vendorShifts = getVendorShifts(vendor);
-            const activeShiftNow = getCurrentShift(vendorShifts);
+            const activeShiftNow = getCurrentShift(vendorShifts, vendor?.timezone);
             const selectedShift = vendorShifts.find(s => s.id === reportShiftId) || null;
 
             const rawShops = todayShopReport.shops || [];
@@ -2522,7 +2522,7 @@ export default function VanDriverMobileApp() {
                 <div className="card-title" style={{ flexWrap: 'wrap', gap: 6 }}>
                   <span>All Unclosed Shifts &amp; Days Collections</span>
                   {(() => {
-                    const curShift = getCurrentShift(getVendorShifts(vendor));
+                    const curShift = getCurrentShift(getVendorShifts(vendor), vendor?.timezone);
                     return curShift ? (
                       <span className="badge badge-blue">{curShift.name} ({curShift.from}–{curShift.to})</span>
                     ) : null;

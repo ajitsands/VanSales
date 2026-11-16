@@ -35,14 +35,52 @@ export function isTimeInShift(hhmm, from, to) {
   return hhmm >= from || hhmm <= to;
 }
 
-export function getCurrentShift(shifts, now = new Date()) {
+export function getVendorTimeHHMM(timeZone, now = new Date()) {
+  if (timeZone) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone,
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).formatToParts(now);
+      const hh = parts.find((p) => p.type === 'hour')?.value || '00';
+      const mm = parts.find((p) => p.type === 'minute')?.value || '00';
+      return `${hh === '24' ? '00' : hh}:${mm}`;
+    } catch {
+      // fallback to local
+    }
+  }
   const hh = String(now.getHours()).padStart(2, '0');
   const mm = String(now.getMinutes()).padStart(2, '0');
-  const cur = `${hh}:${mm}`;
+  return `${hh}:${mm}`;
+}
+
+export function getCurrentShift(shifts, timeZoneOrDate = null) {
+  let timeZone = null;
+  let now = new Date();
+  if (typeof timeZoneOrDate === 'string') {
+    timeZone = timeZoneOrDate;
+  } else if (timeZoneOrDate instanceof Date) {
+    now = timeZoneOrDate;
+  }
+  const cur = getVendorTimeHHMM(timeZone, now);
   return (shifts || []).find((s) => isTimeInShift(cur, s.from, s.to)) || null;
 }
 
-export function toLocalDateStr(d) {
+export function toLocalDateStr(d = new Date(), timeZone = null) {
+  if (timeZone) {
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(d);
+    } catch {
+      // fallback to local
+    }
+  }
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');

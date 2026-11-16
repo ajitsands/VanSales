@@ -49,6 +49,15 @@ class AuthMiddleware
                 if ($vendor['license_status'] !== 'active') {
                     Response::error('Vendor license is ' . $vendor['license_status'] . '. Contact SaNDS Lab support.', 403);
                 }
+                $tz = trim((string)($vendor['timezone'] ?? 'Asia/Bahrain')) ?: 'Asia/Bahrain';
+                if (@date_default_timezone_set($tz)) {
+                    try {
+                        $dt = new \DateTimeImmutable('now', new \DateTimeZone($tz));
+                        $pdo->exec("SET time_zone = " . $pdo->quote($dt->format('P')));
+                    } catch (\Throwable $e) {
+                        // ignore invalid timezone
+                    }
+                }
                 $req->vendor = $vendor;
             }
         };

@@ -746,7 +746,7 @@ export default function MainStorePosPage() {
         };
 
         const vendorShifts = getVendorShifts(vendor);
-        const activeShiftNow = getCurrentShift(vendorShifts);
+        const activeShiftNow = getCurrentShift(vendorShifts, vendor?.timezone);
         const shiftOptions = [
           { id: 'all', label: 'All Shifts', from: '00:00', to: '23:59' },
           ...vendorShifts.map((s) => ({ id: s.id, label: `${s.name} (${s.from}–${s.to})`, from: s.from, to: s.to })),

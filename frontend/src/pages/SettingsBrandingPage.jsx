@@ -24,6 +24,7 @@ export default function SettingsBrandingPage() {
     currency_code: vendor?.currency_code || 'BHD',
     currency_decimals: vendor?.currency_decimals ?? 3,
     date_format: vendor?.date_format || 'DD/MM/YYYY',
+    timezone: vendor?.timezone || 'Asia/Bahrain',
     vat_percent: vendor?.vat_percent ?? 10,
     default_vat_mode: vendor?.default_vat_mode || 'exclusive',
     geofence_radius_m: vendor?.geofence_radius_m ?? 250,
@@ -121,6 +122,39 @@ export default function SettingsBrandingPage() {
                   { value: 'MM/DD/YYYY', label: 'MM/DD/YYYY' },
                 ]}
               />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Timezone (Gulf &amp; India)</label>
+              <SearchableSelect
+                value={form.timezone}
+                onChange={val => setForm({ ...form, timezone: val })}
+                searchPlaceholder="Search country or timezone..."
+                options={[
+                  { value: 'Asia/Bahrain', label: 'Bahrain — Asia/Bahrain (UTC+03:00)' },
+                  { value: 'Asia/Riyadh', label: 'Saudi Arabia — Asia/Riyadh (UTC+03:00)' },
+                  { value: 'Asia/Kuwait', label: 'Kuwait — Asia/Kuwait (UTC+03:00)' },
+                  { value: 'Asia/Qatar', label: 'Qatar — Asia/Qatar (UTC+03:00)' },
+                  { value: 'Asia/Dubai', label: 'UAE — Asia/Dubai (UTC+04:00)' },
+                  { value: 'Asia/Muscat', label: 'Oman — Asia/Muscat (UTC+04:00)' },
+                  { value: 'Asia/Kolkata', label: 'India — Asia/Kolkata (IST UTC+05:30)' },
+                  { value: 'UTC', label: 'UTC (UTC+00:00)' },
+                ]}
+              />
+              <div className="mono" style={{ fontSize: 11, color: '#2563eb', marginTop: 4 }}>
+                Current Time:{' '}
+                {(() => {
+                  try {
+                    return new Intl.DateTimeFormat('en-GB', {
+                      timeZone: form.timezone || 'Asia/Bahrain',
+                      dateStyle: 'medium',
+                      timeStyle: 'medium',
+                      hour12: true,
+                    }).format(new Date());
+                  } catch {
+                    return '';
+                  }
+                })()}
+              </div>
             </div>
             <div className="form-group"><label className="form-label">VAT Rate (%)</label><input className="form-control mono" type="number" step="0.01" value={form.vat_percent} onChange={e => setForm({ ...form, vat_percent: e.target.value })} /></div>
             <div className="form-group">

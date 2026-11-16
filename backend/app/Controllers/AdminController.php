@@ -62,6 +62,16 @@ class AdminController
             }
         }
 
+        $tz = trim((string)($b['timezone'] ?? $v['timezone'] ?? 'Asia/Bahrain'));
+        if (!in_array($tz, \DateTimeZone::listIdentifiers(), true)) {
+            $tz = 'Asia/Bahrain';
+        }
+
+        $tzCols = $pdo->query("SHOW COLUMNS FROM vendors LIKE 'timezone'")->fetchAll();
+        if (empty($tzCols)) {
+            $pdo->exec("ALTER TABLE vendors ADD COLUMN timezone VARCHAR(64) NOT NULL DEFAULT 'Asia/Bahrain' AFTER date_format");
+        }
+
         $stmt = $pdo->prepare("
             UPDATE vendors SET
                 company_name = ?,
@@ -73,6 +83,7 @@ class AdminController
                 currency_code = ?,
                 currency_decimals = ?,
                 date_format = ?,
+                timezone = ?,
                 vat_percent = ?,
                 default_vat_mode = ?,
                 geofence_radius_m = ?,
@@ -90,6 +101,7 @@ class AdminController
             strtoupper(trim($b['currency_code'] ?? $v['currency_code'])),
             (int)($b['currency_decimals'] ?? $v['currency_decimals']),
             $b['date_format'] ?? $v['date_format'],
+            $tz,
             (float)($b['vat_percent'] ?? $v['vat_percent']),
             ($b['default_vat_mode'] ?? $v['default_vat_mode']) === 'inclusive' ? 'inclusive' : 'exclusive',
             (int)($b['geofence_radius_m'] ?? $v['geofence_radius_m']),
