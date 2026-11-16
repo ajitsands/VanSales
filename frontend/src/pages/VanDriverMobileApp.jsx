@@ -23,16 +23,6 @@ const localDateStr = (d = new Date()) => {
   return `${y}-${m}-${day}`;
 };
 
-const haversineMeters = (lat1, lng1, lat2, lng2) => {
-  const toRad = (deg) => (deg * Math.PI) / 180;
-  const R = 6371000;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a = Math.sin(dLat / 2) ** 2
-    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-};
-
 export default function VanDriverMobileApp() {
   const { user, vendor, van, logout, formatMoney, formatDateTime } = useAuth();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -165,8 +155,6 @@ export default function VanDriverMobileApp() {
   const [v2vHistoryTab, setV2vHistoryTab] = useState('waiting');
   const [bulkOtp, setBulkOtp] = useState('');
   const [confirmingAll, setConfirmingAll] = useState(false);
-  const [driverCoords, setDriverCoords] = useState(null);
-  const autoCheckedInRef = React.useRef({});
 
   const load = async () => {
     try {
@@ -245,84 +233,6 @@ export default function VanDriverMobileApp() {
     };
   }, []);
 
-  // Live GPS tracking for automatic shop arrival check-in & moving-away lock
-  useEffect(() => {
-    if (!window.isSecureContext || !navigator.geolocation) return undefined;
-    const onPos = (pos) => {
-      setDriverCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-    };
-    const onErr = () => {
-      // ignore passive GPS errors; manual Check-In handles explicit feedback
-    };
-    const opts = { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 };
-    navigator.geolocation.getCurrentPosition(onPos, onErr, opts);
-    const watchId = navigator.geolocation.watchPosition(onPos, onErr, opts);
-    const pollGps = setInterval(() => {
-      navigator.geolocation.getCurrentPosition(onPos, onErr, opts);
-    }, 15000);
-    return () => {
-      navigator.geolocation.clearWatch(watchId);
-      clearInterval(pollGps);
-    };
-  }, []);
-
-  const maxGeofenceM = Number(vendor?.geofence_radius_m || 250);
-
-  const getShopDistance = (shop) => {
-    if (!driverCoords || !shop) return null;
-    const sLat = Number(shop.latitude);
-    const sLng = Number(shop.longitude);
-    if (!Number.isFinite(sLat) || !Number.isFinite(sLng) || (sLat === 0 && sLng === 0)) return null;
-    return haversineMeters(driverCoords.lat, driverCoords.lng, sLat, sLng);
-  };
-
-  const isShopBillingAllowed = (shop) => {
-    if (!shop) return false;
-    const dist = getShopDistance(shop);
-    if (dist !== null) {
-      return dist <= maxGeofenceM && Boolean(shop.checked_in_today);
-    }
-    return Boolean(shop.checked_in_today);
-  };
-
-  useEffect(() => {
-    if (!driverCoords || !Array.isArray(shops) || shops.length === 0) return;
-
-    // 1. Disable old selectedShop if driver moved outside its geofence radius
-    if (selectedShop) {
-      const selDist = getShopDistance(selectedShop);
-      if (selDist !== null && selDist > maxGeofenceM) {
-        setSelectedShop(null);
-        showToast('error', `Moved away from ${selectedShop.shop_name} (${Math.round(selDist)}m). Billing locked for old shop.`);
-      }
-    }
-
-    // 2. Auto check-in & unlock billing when driver arrives within geofence of another shop
-    if (shiftData?.shift?.status !== 'open') return;
-    const arrivedShop = shops.find((s) => {
-      const d = getShopDistance(s);
-      return d !== null && d <= maxGeofenceM;
-    });
-    if (!arrivedShop) return;
-
-    if (!arrivedShop.checked_in_today && !autoCheckedInRef.current[arrivedShop.id]) {
-      autoCheckedInRef.current[arrivedShop.id] = true;
-      api.post(`/api/shops/${arrivedShop.id}/checkin`, {
-        latitude: driverCoords.lat,
-        longitude: driverCoords.lng,
-      }).then((res) => {
-        const updated = { ...arrivedShop, checked_in_today: 1 };
-        setShops((prev) => prev.map((x) => (x.id === arrivedShop.id ? { ...x, checked_in_today: 1 } : x)));
-        setSelectedShop(updated);
-        showToast('success', `Arrived at ${arrivedShop.shop_name} (${res?.distance_m ?? Math.round(getShopDistance(arrivedShop) || 0)}m) — Billing unlocked!`);
-      }).catch(() => {
-        delete autoCheckedInRef.current[arrivedShop.id];
-      });
-    } else if (arrivedShop.checked_in_today && (!selectedShop || Number(selectedShop.id) !== Number(arrivedShop.id))) {
-      setSelectedShop(arrivedShop);
-    }
-  }, [driverCoords, shops, shiftData?.shift?.status]);
-
   const switchTab = (t) => {
     setActiveTab(t);
     setDrawerOpen(false);
@@ -360,7 +270,6 @@ export default function VanDriverMobileApp() {
     showToast('success', verifyingMsg);
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
-        setDriverCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         try {
           const res = await api.post(`/api/shops/${shop.id}/checkin`, {
             latitude: pos.coords.latitude,
@@ -1485,29 +1394,11 @@ export default function VanDriverMobileApp() {
                       <div style={{ fontSize: 11.5, color: '#475569', marginTop: 2 }}>{s.address}</div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-                      {(() => {
-                        const dist = getShopDistance(s);
-                        const allowed = isShopBillingAllowed(s);
-                        if (allowed) {
-                          return (
-                            <span className="badge badge-emerald">
-                              <CheckCircle2 size={12} /> Checked In{dist !== null ? ` (${Math.round(dist)}m)` : ''}
-                            </span>
-                          );
-                        }
-                        if (s.checked_in_today && dist !== null && dist > maxGeofenceM) {
-                          return (
-                            <span className="badge badge-amber">
-                              Moved Away ({Math.round(dist)}m)
-                            </span>
-                          );
-                        }
-                        return (
-                          <span className="badge badge-slate">
-                            Not Arrived{dist !== null ? ` (${Math.round(dist)}m)` : ''}
-                          </span>
-                        );
-                      })()}
+                      {s.checked_in_today ? (
+                        <span className="badge badge-emerald"><CheckCircle2 size={12} /> Checked In</span>
+                      ) : (
+                        <span className="badge badge-slate">Not Arrived</span>
+                      )}
                       <span className={`badge ${Number(s.location_confirmed) ? 'badge-blue' : 'badge-amber'}`} style={{ fontSize: 10 }}>
                         {Number(s.location_confirmed) ? 'GPS Confirmed' : 'GPS Unconfirmed'}
                       </span>
@@ -1543,7 +1434,7 @@ export default function VanDriverMobileApp() {
                     <button
                       className="btn btn-emerald btn-sm"
                       style={{ flex: 1 }}
-                      disabled={!isShopBillingAllowed(s) || shift?.status !== 'open'}
+                      disabled={!s.checked_in_today || shift?.status !== 'open'}
                       onClick={() => { setSelectedShop(s); switchTab('pos'); }}
                     >
                       <ShoppingBag size={14} /> Bill
@@ -1735,7 +1626,7 @@ export default function VanDriverMobileApp() {
                       onChange={val => setSelectedShop(shops.find(x => String(x.id) === String(val)))}
                       placeholder="Select Checked-In Shop..."
                       searchPlaceholder="Search shop name..."
-                      options={shops.filter(s => isShopBillingAllowed(s)).map(s => ({ value: s.id, label: s.shop_name, sublabel: s.shop_code }))}
+                      options={shops.filter(s => s.checked_in_today).map(s => ({ value: s.id, label: s.shop_name, sublabel: s.shop_code }))}
                     />
                     <div style={{ display: 'flex', gap: 4 }}>
                       <button type="button" className={`btn btn-sm ${invoiceType === 'sale' ? 'btn-blue' : 'btn-outline'}`} onClick={() => setInvoiceType('sale')}>Sale</button>
