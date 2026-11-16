@@ -150,6 +150,8 @@ export default function VanDriverMobileApp() {
   const [closingSubTab, setClosingSubTab] = usePersistedState('van_closing_subtab', 'shift_closing');
   const [pettyFromDate, setPettyFromDate] = useState(todayStr);
   const [pettyToDate, setPettyToDate] = useState(todayStr);
+  const [v2vFromDate, setV2vFromDate] = useState(todayStr);
+  const [v2vToDate, setV2vToDate] = useState(todayStr);
 
   const load = async () => {
     try {
@@ -2178,6 +2180,93 @@ export default function VanDriverMobileApp() {
                 </div>
                 <button type="submit" className="btn btn-amber" style={{ width: '100%' }}>Send Van-to-Van Transfer</button>
               </form>
+
+              {/* Van-to-Van Transfer History (Date Between) */}
+              {(() => {
+                const v2vHistory = (transfers || []).filter((t) => {
+                  if (t.transfer_type !== 'van_to_van') return false;
+                  const involvesMe = Number(t.from_van_id) === Number(van?.id) || Number(t.to_van_id) === Number(van?.id);
+                  if (!involvesMe) return false;
+                  const dStr = String(t.created_at || '').slice(0, 10);
+                  if (v2vFromDate && dStr && dStr < v2vFromDate) return false;
+                  if (v2vToDate && dStr && dStr > v2vToDate) return false;
+                  return true;
+                });
+
+                return (
+                  <div className="card">
+                    <div className="card-title" style={{ flexWrap: 'wrap', gap: 6 }}>
+                      <span>Van-to-Van Transfer History</span>
+                      <span className="badge badge-blue mono">{v2vHistory.length} Transfer(s)</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                      <div>
+                        <label className="form-label">From Date</label>
+                        <input type="date" className="form-control" value={v2vFromDate} onChange={(e) => setV2vFromDate(e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="form-label">To Date</label>
+                        <input type="date" className="form-control" value={v2vToDate} onChange={(e) => setV2vToDate(e.target.value)} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-sm"
+                        style={{ flex: 1 }}
+                        onClick={() => { setV2vFromDate(todayStr); setV2vToDate(todayStr); }}
+                      >
+                        Today
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-sm"
+                        style={{ flex: 1 }}
+                        onClick={() => { setV2vFromDate(''); setV2vToDate(''); }}
+                      >
+                        All Dates
+                      </button>
+                    </div>
+
+                    {v2vHistory.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: 14, fontSize: 12, color: '#64748b' }}>
+                        No Van-to-Van transfers found in selected date range.
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {v2vHistory.map((t) => {
+                          const isSent = Number(t.from_van_id) === Number(van?.id);
+                          return (
+                            <div key={t.id} style={{ padding: '9px 10px', borderRadius: 8, border: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                                <strong className="mono" style={{ fontSize: 12 }}>{t.transfer_no}</strong>
+                                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                  <span className={`badge ${isSent ? 'badge-amber' : 'badge-emerald'}`} style={{ fontSize: 10 }}>
+                                    {isSent ? `Sent → ${t.to_van_name}` : `Received ← ${t.from_van_name}`}
+                                  </span>
+                                  <span className={`badge ${t.status === 'completed' ? 'badge-emerald' : 'badge-blue'}`} style={{ fontSize: 10 }}>
+                                    {t.status === 'completed' ? 'Completed' : `Pending (OTP ${t.otp_code})`}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="mono" style={{ fontSize: 10.5, color: '#64748b', marginTop: 3 }}>
+                                {formatDateTime(t.created_at)}
+                              </div>
+                              <div style={{ marginTop: 6, fontSize: 11.5, color: '#334155' }}>
+                                {(t.lines || []).map((l) => (
+                                  <div key={l.id}>
+                                    <strong>{l.sku}</strong> &mdash; {l.item_name}: <strong className="mono">{Number(l.qty)}</strong> (Batch {l.batch_no})
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
