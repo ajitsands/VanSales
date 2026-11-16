@@ -46,6 +46,9 @@ class SchemaHelper
                 closing_id BIGINT NULL,
                 entry_type ENUM('shortage','excess','settlement') NOT NULL,
                 amount DECIMAL(12,3) NOT NULL,
+                status ENUM('pending','approved','rejected') NOT NULL DEFAULT 'approved',
+                reviewed_by INT NULL,
+                reviewed_at DATETIME NULL,
                 notes VARCHAR(255) NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_dw_vendor_van (vendor_id, van_id)
@@ -75,6 +78,17 @@ class SchemaHelper
         }
         if (!in_array('attachments_json', $pcCols, true)) {
             $pdo->exec("ALTER TABLE petty_cash_entries ADD COLUMN attachments_json LONGTEXT NULL AFTER bill_attachment_path");
+        }
+
+        $dwCols = $pdo->query("SHOW COLUMNS FROM driver_wallet_entries")->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('status', $dwCols, true)) {
+            $pdo->exec("ALTER TABLE driver_wallet_entries ADD COLUMN status ENUM('pending','approved','rejected') NOT NULL DEFAULT 'approved' AFTER amount");
+        }
+        if (!in_array('reviewed_by', $dwCols, true)) {
+            $pdo->exec("ALTER TABLE driver_wallet_entries ADD COLUMN reviewed_by INT NULL AFTER status");
+        }
+        if (!in_array('reviewed_at', $dwCols, true)) {
+            $pdo->exec("ALTER TABLE driver_wallet_entries ADD COLUMN reviewed_at DATETIME NULL AFTER reviewed_by");
         }
     }
 }

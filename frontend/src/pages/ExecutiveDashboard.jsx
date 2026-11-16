@@ -26,6 +26,7 @@ export default function ExecutiveDashboard() {
   const [toDate, setToDate] = usePersistedState('exec_to_date', todayStr);
   const [data, setData] = useState(null);
   const [closings, setClosings] = useState([]);
+  const [walletSettlements, setWalletSettlements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
   const [drillVan, setDrillVan] = useState(null);
@@ -126,12 +127,14 @@ export default function ExecutiveDashboard() {
       const qs = new URLSearchParams();
       if (fDate) qs.set('from_date', fDate);
       if (tDate) qs.set('to_date', tDate);
-      const [exec, cls] = await Promise.all([
+      const [exec, cls, ws] = await Promise.all([
         api.get(`/api/dashboard/executive?${qs.toString()}`),
         api.get('/api/closings'),
+        api.get('/api/driver-wallet/settlements'),
       ]);
       setData(exec);
       setClosings(cls);
+      setWalletSettlements(Array.isArray(ws) ? ws : []);
     } catch {
       // handled gracefully
     } finally {
@@ -160,6 +163,16 @@ export default function ExecutiveDashboard() {
     try {
       await api.post(`/api/closings/${id}/review`, { decision, review_notes: `Reviewed by ${user.full_name}` });
       setMsg(`Closing #${id} ${decision}!`);
+      load();
+    } catch (e) {
+      setAlertMessage(e.message);
+    }
+  };
+
+  const handleReviewWallet = async (id, decision) => {
+    try {
+      await api.post(`/api/driver-wallet/${id}/review`, { decision });
+      setMsg(`Wallet payment #${id} ${decision}!`);
       load();
     } catch (e) {
       setAlertMessage(e.message);
@@ -919,6 +932,50 @@ export default function ExecutiveDashboard() {
               render: (c) => <span className="mono" style={{ color: '#6d28d9' }}>{Number(c.expected_qr).toFixed(3)} / <strong>{Number(c.declared_qr).toFixed(3)}</strong></span>,
             },
             {
+              key: 'petty_shortage',
+              label: 'Petty Cash & Shortage',
+              sortValue: (c) => Number(c.shortage_amount || 0),
+              render: (c) => (
+                <div className="mono" style={{ fontSize: 11 }}>
+                  {(Number(c.petty_cash_income || 0) > 0 || Number(c.petty_cash_expense || 0) > 0) ? (
+                    <div>
+                      <span style={{ color: '#059669' }}>+{Number(c.petty_cash_income || 0).toFixed(3)}</span>
+                      {' / '}
+                      <span style={{ color: '#be123c' }}>-{Number(c.petty_cash_expense || 0).toFixed(3)}</span>
+                    </div>
+                  ) : (
+                    <span style={{ color: '#94a3b8' }}>No Petty</span>
+                  )}
+                  {Number(c.shortage_amount || 0) > 0.0005 && (
+                    <div style={{ marginTop: 2 }}>
+                      <span className="badge badge-rose mono" style={{ fontSize: 10 }}>
+                        Short: {formatMoney(c.shortage_amount)}{Number(c.keep_shortage_in_wallet) ? ' (Wallet)' : ''}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ),
+            },
+            {
+              key: 'van_wallet_balance',
+              label: 'Van Wallet (Total)',
+              sortValue: (c) => Number(c.van_wallet_balance || 0),
+              render: (c) => (
+                <div>
+                  <span className={`mono ${Number(c.van_wallet_balance || 0) > 0.0005 ? 'badge badge-rose' : 'badge badge-emerald'}`}>
+                    {formatMoney(c.van_wallet_balance)}
+                  </span>
+                  {Number(c.pending_wallet_settlement || 0) > 0.0005 && (
+                    <div style={{ marginTop: 2 }}>
+                      <span className="badge badge-amber mono" style={{ fontSize: 10 }}>
+                        Pend Pay: {formatMoney(c.pending_wallet_settlement)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ),
+            },
+            {
               key: 'status',
               label: 'Status',
               sortValue: (c) => c.status || '',
@@ -944,6 +1001,66 @@ export default function ExecutiveDashboard() {
                 </div>
               ) : (
                 <span style={{ fontSize: 11, color: '#64748b' }}>{c.reviewed_at || 'View Only'}</span>
+              ),
+            },
+          ]}
+        />
+      </div>
+
+      {/* Driver Wallet Payment Approvals */}
+      <div className="card" style={{ borderColor: walletSettlements.some(w => w.status === 'pending') ? '#f59e0b' : undefined }}>
+        <div className="card-title">
+          <span>Driver Wallet Payment Approvals (Shortage Settlements)</span>
+          <span className="badge badge-amber">{walletSettlements.filter(w => w.status === 'pending').length} Pending</span>
+        </div>
+        <DataTable
+          data={walletSettlements}
+          compact
+          searchPlaceholder="Search van, driver, status..."
+          exportFilename="driver-wallet-settlements.csv"
+          emptyMessage="No driver wallet settlement payments submitted yet."
+          columns={[
+            {
+              key: 'van_name',
+              label: 'Van & Driver',
+              sortValue: (w) => w.van_name || '',
+              searchValue: (w) => `${w.van_name || ''} ${w.driver_name || ''}`,
+              render: (w) => (
+                <div>
+                  <div style={{ fontWeight: 700 }}>{w.van_name}</div>
+                  <div style={{ fontSize: 11, color: '#64748b' }}>{w.driver_name || '-'}</div>
+                </div>
+              ),
+            },
+            { key: 'amount', label: 'Payment Amount', sortValue: (w) => Number(w.amount || 0), render: (w) => <span className="mono" style={{ fontWeight: 700, color: '#059669' }}>{formatMoney(w.amount)}</span> },
+            { key: 'current_wallet_balance', label: 'Wallet Total (Now)', sortValue: (w) => Number(w.current_wallet_balance || 0), render: (w) => <span className={`mono ${Number(w.current_wallet_balance || 0) > 0.0005 ? 'badge badge-rose' : 'badge badge-emerald'}`}>{formatMoney(w.current_wallet_balance)}</span> },
+            { key: 'notes', label: 'Notes', sortValue: (w) => w.notes || '' },
+            { key: 'created_at', label: 'Date', sortValue: (w) => w.created_at || '', render: (w) => <span className="mono" style={{ fontSize: 11 }}>{formatDateTime(w.created_at)}</span> },
+            {
+              key: 'status',
+              label: 'Status',
+              sortValue: (w) => w.status || '',
+              render: (w) => (
+                <span className={`badge ${w.status === 'approved' ? 'badge-emerald' : w.status === 'rejected' ? 'badge-rose' : 'badge-amber'}`}>
+                  {w.status}
+                </span>
+              ),
+            },
+            {
+              key: 'action',
+              label: 'Action',
+              sortable: false,
+              render: (w) => w.status === 'pending' && user.role === 'admin' ? (
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" className="btn btn-emerald btn-sm" onClick={() => handleReviewWallet(w.id, 'approved')}>
+                    <CheckCircle size={13} /> Approve
+                  </button>
+                  <button type="button" className="btn btn-rose btn-sm" onClick={() => handleReviewWallet(w.id, 'rejected')}>
+                    <XCircle size={13} /> Reject
+                  </button>
+                </div>
+              ) : (
+                <span style={{ fontSize: 11, color: '#64748b' }}>{w.reviewed_at ? formatDateTime(w.reviewed_at) : 'View Only'}</span>
               ),
             },
           ]}

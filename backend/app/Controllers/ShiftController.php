@@ -93,19 +93,25 @@ class ShiftController
         $collections['petty_cash_expense'] = round($pettyExpense, 3);
         $collections['expected_cash_net'] = max(0.0, round($collections['cash'] + $pettyIncome - $pettyExpense, 3));
 
-        // Driver Wallet Balance (Shortage kept in wallet)
+        // Driver Wallet Balance (only approved entries affect balance)
         $wStmt = $pdo->prepare("
-            SELECT COALESCE(SUM(CASE WHEN entry_type='shortage' THEN amount WHEN entry_type IN ('excess','settlement') THEN -amount ELSE 0 END), 0) AS bal
+            SELECT COALESCE(SUM(CASE WHEN entry_type='shortage' AND status='approved' THEN amount
+                                     WHEN entry_type IN ('excess','settlement') AND status='approved' THEN -amount
+                                     ELSE 0 END), 0) AS bal,
+                   COALESCE(SUM(CASE WHEN entry_type='settlement' AND status='pending' THEN amount ELSE 0 END), 0) AS pend
             FROM driver_wallet_entries
             WHERE vendor_id = ? AND van_id = ?
         ");
         $wStmt->execute([$vendorId, $vanId]);
-        $walletBalance = round((float)$wStmt->fetchColumn(), 3);
+        $wRow = $wStmt->fetch();
+        $walletBalance = round((float)($wRow['bal'] ?? 0), 3);
+        $pendingWalletSettlement = round((float)($wRow['pend'] ?? 0), 3);
 
         Response::ok([
-            'shift'                 => $shift,
-            'collections'           => $collections,
-            'driver_wallet_balance' => $walletBalance,
+            'shift'                     => $shift,
+            'collections'               => $collections,
+            'driver_wallet_balance'     => $walletBalance,
+            'pending_wallet_settlement' => $pendingWalletSettlement,
         ]);
     }
 
@@ -305,8 +311,21 @@ class ShiftController
     {
         $vendorId = (int)$req->user['vendor_id'];
         $pdo = Database::getConnection();
+        SchemaHelper::ensurePettyCashAndWalletSchema($pdo);
         $stmt = $pdo->prepare("
-            SELECT c.*, v.van_code, v.van_name, s.shift_name, s.shift_type, s.business_date, u.full_name AS driver_name
+            SELECT c.*, v.van_code, v.van_name, s.shift_name, s.shift_type, s.business_date, u.full_name AS driver_name,
+                   COALESCE((
+                       SELECT SUM(CASE WHEN w.entry_type='shortage' AND w.status='approved' THEN w.amount
+                                       WHEN w.entry_type IN ('excess','settlement') AND w.status='approved' THEN -w.amount
+                                       ELSE 0 END)
+                       FROM driver_wallet_entries w
+                       WHERE w.vendor_id = c.vendor_id AND w.van_id = c.van_id
+                   ), 0) AS van_wallet_balance,
+                   COALESCE((
+                       SELECT SUM(w.amount)
+                       FROM driver_wallet_entries w
+                       WHERE w.vendor_id = c.vendor_id AND w.van_id = c.van_id AND w.entry_type='settlement' AND w.status='pending'
+                   ), 0) AS pending_wallet_settlement
             FROM closing_requests c
             INNER JOIN vans v ON v.id = c.van_id
             INNER JOIN van_shifts s ON s.id = c.shift_id

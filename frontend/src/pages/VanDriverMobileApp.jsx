@@ -147,6 +147,9 @@ export default function VanDriverMobileApp() {
   const [savingPetty, setSavingPetty] = useState(false);
   const [walletSettleAmt, setWalletSettleAmt] = useState('');
   const [settlingWallet, setSettlingWallet] = useState(false);
+  const [closingSubTab, setClosingSubTab] = usePersistedState('van_closing_subtab', 'shift_closing');
+  const [pettyFromDate, setPettyFromDate] = useState(todayStr);
+  const [pettyToDate, setPettyToDate] = useState(todayStr);
 
   const load = async () => {
     try {
@@ -162,7 +165,7 @@ export default function VanDriverMobileApp() {
         api.get('/api/reports/van-today-shops'),
         api.get(`/api/dashboard/van?from_date=${dashFromDate}&to_date=${dashToDate}`),
         api.get('/api/requests'),
-        api.get('/api/petty-cash?source_type=van'),
+        api.get(`/api/petty-cash?source_type=van&from_date=${pettyFromDate}&to_date=${pettyToDate}`),
       ]);
       setShiftData(sh);
       setShops(sp);
@@ -589,6 +592,18 @@ export default function VanDriverMobileApp() {
     } catch (e2) { setErr(e2.message); }
   };
 
+  const loadVanPettyCash = async (f = pettyFromDate, t = pettyToDate) => {
+    try {
+      const qs = new URLSearchParams({ source_type: 'van' });
+      if (f) qs.set('from_date', f);
+      if (t) qs.set('to_date', t);
+      const pc = await api.get(`/api/petty-cash?${qs.toString()}`);
+      if (pc) setPettyCashData(pc);
+    } catch (e2) {
+      setErr(e2.message);
+    }
+  };
+
   const addVanPettyCash = async (e) => {
     e.preventDefault();
     setErr(''); setMsg('');
@@ -610,6 +625,7 @@ export default function VanDriverMobileApp() {
       setPettyForm({ ...pettyForm, amount: '', notes: '' });
       setPettyAttachments([]);
       load();
+      loadVanPettyCash();
     } catch (e2) {
       setErr(e2.message);
     } finally {
@@ -630,7 +646,7 @@ export default function VanDriverMobileApp() {
         amount: Number(walletSettleAmt),
         notes: 'Driver wallet shortage payment',
       });
-      setMsg('Wallet balance settled!');
+      setMsg('Wallet payment submitted for Admin approval! Balance updates once approved.');
       setWalletSettleAmt('');
       load();
     } catch (e2) {
@@ -2213,17 +2229,48 @@ export default function VanDriverMobileApp() {
             const totalDeclared = dCash + dCard + dQr + dBank + dCheque;
             const shortageAmt = Math.max(0, Number((totalExpected - totalDeclared).toFixed(3)));
             const walletBal = Number(shiftData.driver_wallet_balance ?? pettyCashData.wallet_balance ?? 0);
+            const pendWalletPay = Number(shiftData.pending_wallet_settlement ?? pettyCashData.pending_wallet_settlement ?? 0);
 
             return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {/* Sub-Tab Switcher: Shift Closing vs Petty Cash */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${closingSubTab === 'shift_closing' ? 'btn-primary' : 'btn-outline'}`}
+                  onClick={() => setClosingSubTab('shift_closing')}
+                >
+                  <Clock size={14} /> Shift Closing
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${closingSubTab === 'petty_cash' ? 'btn-primary' : 'btn-outline'}`}
+                  onClick={() => {
+                    setClosingSubTab('petty_cash');
+                    loadVanPettyCash();
+                  }}
+                >
+                  <Banknote size={14} /> Petty Cash
+                </button>
+              </div>
+
+              {closingSubTab === 'shift_closing' && (
+                <>
               {/* Driver Wallet & Unclosed Shifts Summary */}
               <div className="card" style={{ borderLeft: `4px solid ${walletBal > 0 ? '#e11d48' : '#059669'}` }}>
                 <div className="card-title" style={{ flexWrap: 'wrap', gap: 6 }}>
-                  <span>Driver Wallet (Shortage Balance)</span>
+                  <span>Driver Wallet (Total Till Now)</span>
                   <span className={`badge mono ${walletBal > 0 ? 'badge-rose' : 'badge-emerald'}`} style={{ fontSize: 12 }}>
                     {formatMoney(walletBal)}
                   </span>
                 </div>
+                {pendWalletPay > 0.0005 && (
+                  <div style={{ marginBottom: 6 }}>
+                    <span className="badge badge-amber mono" style={{ fontSize: 11 }}>
+                      Pending Admin Approval: {formatMoney(pendWalletPay)}
+                    </span>
+                  </div>
+                )}
                 {Number(col.unclosed_shifts_count || 0) > 0 && (
                   <div style={{ fontSize: 11.5, color: '#475569', marginBottom: 8 }}>
                     Closing includes <strong>{col.unclosed_shifts_count}</strong> unclosed shift(s)
@@ -2238,12 +2285,12 @@ export default function VanDriverMobileApp() {
                       type="number"
                       step="0.001"
                       className="form-control mono"
-                      placeholder="Settle amount..."
+                      placeholder="Pay wallet amount..."
                       value={walletSettleAmt}
                       onChange={(e) => setWalletSettleAmt(e.target.value)}
                     />
                     <button type="submit" className="btn btn-emerald btn-sm" disabled={settlingWallet}>
-                      {settlingWallet ? 'Saving...' : 'Pay Wallet'}
+                      {settlingWallet ? 'Sending...' : 'Pay Wallet'}
                     </button>
                   </form>
                 )}
@@ -2259,7 +2306,7 @@ export default function VanDriverMobileApp() {
                     ) : null;
                   })()}
                 </div>
-                <div className="grid-2" style={{ gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <div style={{ padding: 8, background: '#ecfdf5', borderRadius: 6 }}>
                     <div style={{ fontSize: 11, color: '#065f46', fontWeight: 700 }}><Banknote size={13} /> Cash Collected</div>
                     <div className="mono" style={{ fontWeight: 800 }}>{formatMoney(col.cash)}</div>
@@ -2291,111 +2338,6 @@ export default function VanDriverMobileApp() {
                   </div>
                 </div>
               </div>
-
-              {/* Van Petty Cash: Expenses & Other Income */}
-              <form onSubmit={addVanPettyCash} className="card">
-                <div className="card-title">
-                  <span>Van Petty Cash (Expense / Other Income)</span>
-                  <span className="badge badge-slate mono">
-                    +Inc: {formatMoney(col.petty_cash_income)} | -Exp: {formatMoney(col.petty_cash_expense)}
-                  </span>
-                </div>
-                <div className="grid-2" style={{ gap: 8 }}>
-                  <div className="form-group">
-                    <label className="form-label">Type</label>
-                    <select
-                      className="form-control"
-                      value={pettyForm.entry_type}
-                      onChange={(e) => setPettyForm({
-                        ...pettyForm,
-                        entry_type: e.target.value,
-                        category: e.target.value === 'income' ? 'Other Income' : 'Fuel',
-                      })}
-                    >
-                      <option value="expense">Expense (-)</option>
-                      <option value="income">Other Income (+)</option>
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Category</label>
-                    <select
-                      className="form-control"
-                      value={pettyForm.category}
-                      onChange={(e) => setPettyForm({ ...pettyForm, category: e.target.value })}
-                    >
-                      {pettyForm.entry_type === 'income' ? (
-                        <>
-                          <option value="Other Income">Other Income</option>
-                          <option value="Scrap / Empty Box">Scrap / Empty Box</option>
-                          <option value="Delivery Fee">Delivery Fee</option>
-                        </>
-                      ) : (
-                        <>
-                          <option value="Fuel">Fuel</option>
-                          <option value="Toll / Parking">Toll / Parking</option>
-                          <option value="Food / Allowance">Food / Allowance</option>
-                          <option value="Van Maintenance">Van Maintenance</option>
-                          <option value="Misc Expense">Misc Expense</option>
-                        </>
-                      )}
-                    </select>
-                  </div>
-                </div>
-                <div className="grid-2" style={{ gap: 8 }}>
-                  <div className="form-group">
-                    <label className="form-label">Amount ({vendor?.currency || 'BHD'})</label>
-                    <input
-                      type="number"
-                      step="0.001"
-                      className="form-control mono"
-                      placeholder="0.000"
-                      value={pettyForm.amount}
-                      onChange={(e) => setPettyForm({ ...pettyForm, amount: e.target.value })}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Notes</label>
-                    <input
-                      className="form-control"
-                      placeholder="Details..."
-                      value={pettyForm.notes}
-                      onChange={(e) => setPettyForm({ ...pettyForm, notes: e.target.value })}
-                    />
-                  </div>
-                </div>
-                <div style={{ marginBottom: 10 }}>
-                  <AttachmentUploader
-                    attachments={pettyAttachments}
-                    setAttachments={setPettyAttachments}
-                    label="Bill / Receipt Photo (Take Photo or Gallery)"
-                  />
-                </div>
-                <button type="submit" className="btn btn-blue btn-sm" style={{ width: '100%' }} disabled={savingPetty}>
-                  {savingPetty ? 'Saving...' : `Book ${pettyForm.entry_type === 'income' ? 'Other Income' : 'Expense'}`}
-                </button>
-                {(pettyCashData.entries || []).length > 0 && (
-                  <div style={{ marginTop: 10, maxHeight: 150, overflowY: 'auto', borderTop: '1px solid #e2e8f0', paddingTop: 6 }}>
-                    {(pettyCashData.entries || []).slice(0, 10).map((pc) => (
-                      <div key={pc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11.5, padding: '4px 0', borderBottom: '1px solid #f1f5f9', gap: 6 }}>
-                        <span style={{ flex: 1, minWidth: 0 }}>
-                          <span className={`badge ${pc.entry_type === 'income' ? 'badge-emerald' : 'badge-rose'}`} style={{ fontSize: 9.5, marginRight: 5 }}>
-                            {pc.entry_type === 'income' ? '+' : '-'} {pc.category}
-                          </span>
-                          {pc.notes || pc.entry_date}
-                          {pc.bill_attachment_path && (
-                            <a href={pc.bill_attachment_path} target="_blank" rel="noreferrer" className="badge badge-blue" style={{ marginLeft: 6, fontSize: 9.5, textDecoration: 'none' }}>
-                              View Bill
-                            </a>
-                          )}
-                        </span>
-                        <strong className="mono" style={{ color: pc.entry_type === 'income' ? '#059669' : '#be123c' }}>
-                          {pc.entry_type === 'income' ? '+' : '-'}{formatMoney(pc.amount)}
-                        </strong>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </form>
 
               {shift?.status === 'open' && (
                 <form onSubmit={submitClosing} className="card">
@@ -2452,6 +2394,167 @@ export default function VanDriverMobileApp() {
 
                   <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Submit Closing to Admin App</button>
                 </form>
+              )}
+                </>
+              )}
+
+              {closingSubTab === 'petty_cash' && (
+                <>
+                  {/* Van Petty Cash: Book Expense & Other Income */}
+                  <form onSubmit={addVanPettyCash} className="card">
+                    <div className="card-title">
+                      <span>Book Expense / Other Income</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <div className="form-group">
+                        <label className="form-label">Type</label>
+                        <select
+                          className="form-control"
+                          value={pettyForm.entry_type}
+                          onChange={(e) => setPettyForm({
+                            ...pettyForm,
+                            entry_type: e.target.value,
+                            category: e.target.value === 'income' ? 'Other Income' : 'Fuel',
+                          })}
+                        >
+                          <option value="expense">Expense (-)</option>
+                          <option value="income">Other Income (+)</option>
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Category</label>
+                        <select
+                          className="form-control"
+                          value={pettyForm.category}
+                          onChange={(e) => setPettyForm({ ...pettyForm, category: e.target.value })}
+                        >
+                          {pettyForm.entry_type === 'income' ? (
+                            <>
+                              <option value="Other Income">Other Income</option>
+                              <option value="Scrap / Empty Box">Scrap / Empty Box</option>
+                              <option value="Delivery Fee">Delivery Fee</option>
+                            </>
+                          ) : (
+                            <>
+                              <option value="Fuel">Fuel</option>
+                              <option value="Toll / Parking">Toll / Parking</option>
+                              <option value="Food / Allowance">Food / Allowance</option>
+                              <option value="Van Maintenance">Van Maintenance</option>
+                              <option value="Misc Expense">Misc Expense</option>
+                            </>
+                          )}
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <div className="form-group">
+                        <label className="form-label">Amount ({vendor?.currency || 'BHD'})</label>
+                        <input
+                          type="number"
+                          step="0.001"
+                          className="form-control mono"
+                          placeholder="0.000"
+                          value={pettyForm.amount}
+                          onChange={(e) => setPettyForm({ ...pettyForm, amount: e.target.value })}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Notes</label>
+                        <input
+                          className="form-control"
+                          placeholder="Details..."
+                          value={pettyForm.notes}
+                          onChange={(e) => setPettyForm({ ...pettyForm, notes: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ marginBottom: 10 }}>
+                      <AttachmentUploader
+                        attachments={pettyAttachments}
+                        setAttachments={setPettyAttachments}
+                        label="Bill / Receipt Photo (Take Photo or Gallery)"
+                      />
+                    </div>
+                    <button type="submit" className="btn btn-blue btn-sm" style={{ width: '100%' }} disabled={savingPetty}>
+                      {savingPetty ? 'Saving...' : `Book ${pettyForm.entry_type === 'income' ? 'Other Income' : 'Expense'}`}
+                    </button>
+                  </form>
+
+                  {/* Date-Wise / Date Between Petty Cash Summary & History */}
+                  <div className="card">
+                    <div className="card-title">
+                      <span>Petty Cash Summary (Date Filter)</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                      <div>
+                        <label className="form-label">From Date</label>
+                        <input type="date" className="form-control" value={pettyFromDate} onChange={(e) => setPettyFromDate(e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="form-label">To Date</label>
+                        <input type="date" className="form-control" value={pettyToDate} onChange={(e) => setPettyToDate(e.target.value)} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                      <button type="button" className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={() => loadVanPettyCash(pettyFromDate, pettyToDate)}>
+                        Search Dates
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-sm"
+                        onClick={() => {
+                          setPettyFromDate(todayStr);
+                          setPettyToDate(todayStr);
+                          loadVanPettyCash(todayStr, todayStr);
+                        }}
+                      >
+                        Today
+                      </button>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+                      <div style={{ padding: 8, borderRadius: 6, background: '#fff1f2', border: '1px solid #fecdd3' }}>
+                        <div style={{ fontSize: 10.5, fontWeight: 700, color: '#9f1239' }}>Sum of Expenses</div>
+                        <div className="mono" style={{ fontWeight: 800, color: '#be123c' }}>-{formatMoney(pettyCashData.summary?.total_expense)}</div>
+                      </div>
+                      <div style={{ padding: 8, borderRadius: 6, background: '#ecfdf5', border: '1px solid #a7f3d0' }}>
+                        <div style={{ fontSize: 10.5, fontWeight: 700, color: '#065f46' }}>Sum of Other Income</div>
+                        <div className="mono" style={{ fontWeight: 800, color: '#059669' }}>+{formatMoney(pettyCashData.summary?.total_income)}</div>
+                      </div>
+                    </div>
+
+                    {(pettyCashData.entries || []).length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: 14, fontSize: 12, color: '#64748b' }}>
+                        No petty cash entries in selected dates.
+                      </div>
+                    ) : (
+                      <div style={{ maxHeight: 260, overflowY: 'auto', borderTop: '1px solid #e2e8f0', paddingTop: 6 }}>
+                        {(pettyCashData.entries || []).map((pc) => (
+                          <div key={pc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11.5, padding: '6px 0', borderBottom: '1px solid #f1f5f9', gap: 6 }}>
+                            <span style={{ flex: 1, minWidth: 0 }}>
+                              <div>
+                                <span className={`badge ${pc.entry_type === 'income' ? 'badge-emerald' : 'badge-rose'}`} style={{ fontSize: 9.5, marginRight: 5 }}>
+                                  {pc.entry_type === 'income' ? '+' : '-'} {pc.category}
+                                </span>
+                                <span className="mono" style={{ fontSize: 10.5, color: '#64748b' }}>{pc.entry_date}</span>
+                              </div>
+                              <div style={{ color: '#334155', marginTop: 2 }}>
+                                {pc.notes || '-'}
+                                {pc.bill_attachment_path && (
+                                  <a href={pc.bill_attachment_path} target="_blank" rel="noreferrer" className="badge badge-blue" style={{ marginLeft: 6, fontSize: 9.5, textDecoration: 'none' }}>
+                                    View Bill
+                                  </a>
+                                )}
+                              </div>
+                            </span>
+                            <strong className="mono" style={{ color: pc.entry_type === 'income' ? '#059669' : '#be123c' }}>
+                              {pc.entry_type === 'income' ? '+' : '-'}{formatMoney(pc.amount)}
+                            </strong>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
             </div>
             );

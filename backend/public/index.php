@@ -148,6 +148,8 @@ $router->add('POST', '/api/closings/{id}/review', [ShiftController::class, 'revi
 $router->add('GET', '/api/petty-cash', [PettyCashController::class, 'listEntries'], $vendorUsers);
 $router->add('POST', '/api/petty-cash', [PettyCashController::class, 'createEntry'], $vendorUsers);
 $router->add('POST', '/api/driver-wallet/settle', [PettyCashController::class, 'settleWallet'], $vendorUsers);
+$router->add('GET', '/api/driver-wallet/settlements', [PettyCashController::class, 'listWalletSettlements'], [$auth, AuthMiddleware::requirePermission('reports')]);
+$router->add('POST', '/api/driver-wallet/{id}/review', [PettyCashController::class, 'reviewWalletSettlement'], [$auth, AuthMiddleware::requireRole(['admin'])]);
 
 // Shop / Customer Ledgers & Cheque Reconciliation
 $router->add('GET', '/api/shop-ledgers', [LedgerChequeController::class, 'listShopLedgers'], $vendorUsers);

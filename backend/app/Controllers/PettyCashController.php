@@ -58,6 +58,7 @@ class PettyCashController
         }
 
         $walletBalance = 0.0;
+        $pendingSettlement = 0.0;
         $walletEntries = [];
         if ($vanId > 0) {
             $wStmt = $pdo->prepare("
@@ -70,23 +71,29 @@ class PettyCashController
             $wStmt->execute([$vendorId, $vanId]);
             $walletEntries = $wStmt->fetchAll();
             foreach ($walletEntries as $we) {
-                if ($we['entry_type'] === 'shortage') {
+                $st = $we['status'] ?? 'approved';
+                if ($we['entry_type'] === 'shortage' && $st === 'approved') {
                     $walletBalance += (float)$we['amount'];
-                } else {
-                    $walletBalance -= (float)$we['amount'];
+                } elseif (in_array($we['entry_type'], ['excess', 'settlement'], true)) {
+                    if ($st === 'approved') {
+                        $walletBalance -= (float)$we['amount'];
+                    } elseif ($st === 'pending' && $we['entry_type'] === 'settlement') {
+                        $pendingSettlement += (float)$we['amount'];
+                    }
                 }
             }
         }
 
         Response::ok([
-            'entries'        => $entries,
-            'summary'        => [
+            'entries'                   => $entries,
+            'summary'                   => [
                 'total_income'  => round($totalIncome, 3),
                 'total_expense' => round($totalExpense, 3),
                 'net_petty'     => round($totalIncome - $totalExpense, 3),
             ],
-            'wallet_balance' => round($walletBalance, 3),
-            'wallet_entries' => $walletEntries,
+            'wallet_balance'            => round($walletBalance, 3),
+            'pending_wallet_settlement' => round($pendingSettlement, 3),
+            'wallet_entries'            => $walletEntries,
         ]);
     }
 
@@ -202,12 +209,76 @@ class PettyCashController
             Response::error('Valid Van ID and positive settlement amount are required', 422);
         }
 
-        $stmt = $pdo->prepare("
-            INSERT INTO driver_wallet_entries (vendor_id, van_id, driver_user_id, entry_type, amount, notes)
-            VALUES (?, ?, ?, 'settlement', ?, ?)
-        ");
-        $stmt->execute([$vendorId, $vanId, (int)$req->user['id'], $amount, $notes]);
+        $isVan = ($req->user['role'] ?? '') === 'van';
+        $status = $isVan ? 'pending' : 'approved';
 
-        Response::ok(['id' => (int)$pdo->lastInsertId()], 'Driver wallet settlement recorded', 201);
+        $stmt = $pdo->prepare("
+            INSERT INTO driver_wallet_entries (vendor_id, van_id, driver_user_id, entry_type, amount, status, reviewed_by, reviewed_at, notes)
+            VALUES (?, ?, ?, 'settlement', ?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([
+            $vendorId,
+            $vanId,
+            (int)$req->user['id'],
+            $amount,
+            $status,
+            $isVan ? null : (int)$req->user['id'],
+            $isVan ? null : date('Y-m-d H:i:s'),
+            $notes,
+        ]);
+
+        Response::ok([
+            'id'     => (int)$pdo->lastInsertId(),
+            'status' => $status,
+        ], $isVan ? 'Wallet payment submitted for Admin approval' : 'Driver wallet settlement approved', 201);
+    }
+
+    public function listWalletSettlements(Request $req): void
+    {
+        $pdo = Database::getConnection();
+        SchemaHelper::ensurePettyCashAndWalletSchema($pdo);
+        $vendorId = (int)$req->user['vendor_id'];
+
+        $stmt = $pdo->prepare("
+            SELECT w.*, v.van_code, v.van_name, u.full_name AS driver_name,
+                   COALESCE((
+                       SELECT SUM(CASE WHEN w2.entry_type='shortage' AND w2.status='approved' THEN w2.amount
+                                       WHEN w2.entry_type IN ('excess','settlement') AND w2.status='approved' THEN -w2.amount
+                                       ELSE 0 END)
+                       FROM driver_wallet_entries w2
+                       WHERE w2.vendor_id = w.vendor_id AND w2.van_id = w.van_id
+                   ), 0) AS current_wallet_balance
+            FROM driver_wallet_entries w
+            INNER JOIN vans v ON v.id = w.van_id
+            LEFT JOIN users u ON u.id = w.driver_user_id
+            WHERE w.vendor_id = ? AND w.entry_type = 'settlement'
+            ORDER BY FIELD(w.status,'pending','rejected','approved'), w.id DESC
+        ");
+        $stmt->execute([$vendorId]);
+        Response::ok($stmt->fetchAll());
+    }
+
+    public function reviewWalletSettlement(Request $req): void
+    {
+        $pdo = Database::getConnection();
+        SchemaHelper::ensurePettyCashAndWalletSchema($pdo);
+        $vendorId = (int)$req->user['vendor_id'];
+        $id = (int)($req->params['id'] ?? 0);
+        $decision = (string)($req->body()['decision'] ?? '');
+        if (!in_array($decision, ['approved', 'rejected'], true)) {
+            Response::error('Decision must be approved or rejected', 422);
+        }
+
+        $stmt = $pdo->prepare("SELECT * FROM driver_wallet_entries WHERE id = ? AND vendor_id = ? AND entry_type = 'settlement' LIMIT 1");
+        $stmt->execute([$id, $vendorId]);
+        $row = $stmt->fetch();
+        if (!$row || $row['status'] !== 'pending') {
+            Response::error('Wallet settlement request not found or already reviewed', 404);
+        }
+
+        $upd = $pdo->prepare("UPDATE driver_wallet_entries SET status = ?, reviewed_by = ?, reviewed_at = NOW() WHERE id = ?");
+        $upd->execute([$decision, (int)$req->user['id'], $id]);
+
+        Response::ok(null, "Wallet payment {$decision}");
     }
 }
