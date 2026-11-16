@@ -140,10 +140,16 @@ export default function VanDriverMobileApp() {
   const [declBank, setDeclBank] = useState('');
   const [declCheque, setDeclCheque] = useState('');
   const [driverNotes, setDriverNotes] = useState('');
+  const [keepShortageInWallet, setKeepShortageInWallet] = useState(false);
+  const [pettyCashData, setPettyCashData] = useState({ entries: [], summary: { total_income: 0, total_expense: 0, net_petty: 0 }, wallet_balance: 0, wallet_entries: [] });
+  const [pettyForm, setPettyForm] = useState({ entry_type: 'expense', category: 'Fuel', amount: '', notes: '' });
+  const [savingPetty, setSavingPetty] = useState(false);
+  const [walletSettleAmt, setWalletSettleAmt] = useState('');
+  const [settlingWallet, setSettlingWallet] = useState(false);
 
   const load = async () => {
     try {
-      const [sh, sp, vs, it, vn, tr, inv, sl, rep, vdash, reqs] = await Promise.all([
+      const [sh, sp, vs, it, vn, tr, inv, sl, rep, vdash, reqs, pc] = await Promise.all([
         api.get('/api/shifts/current'),
         api.get('/api/shops'),
         api.get('/api/inventory/van-stock'),
@@ -155,6 +161,7 @@ export default function VanDriverMobileApp() {
         api.get('/api/reports/van-today-shops'),
         api.get(`/api/dashboard/van?from_date=${dashFromDate}&to_date=${dashToDate}`),
         api.get('/api/requests'),
+        api.get('/api/petty-cash?source_type=van'),
       ]);
       setShiftData(sh);
       setShops(sp);
@@ -167,6 +174,7 @@ export default function VanDriverMobileApp() {
       setTodayShopReport(rep);
       setVanDash(vdash);
       setMyRequests(Array.isArray(reqs) ? reqs : []);
+      if (pc) setPettyCashData(pc);
     } catch (e) {
       setErr(e.message);
     }
@@ -580,19 +588,71 @@ export default function VanDriverMobileApp() {
     } catch (e2) { setErr(e2.message); }
   };
 
+  const addVanPettyCash = async (e) => {
+    e.preventDefault();
+    setErr(''); setMsg('');
+    if (!Number(pettyForm.amount) || Number(pettyForm.amount) <= 0) {
+      setErr('Enter a valid petty cash amount.');
+      return;
+    }
+    setSavingPetty(true);
+    try {
+      await api.post('/api/petty-cash', {
+        source_type: 'van',
+        entry_type: pettyForm.entry_type,
+        category: pettyForm.category,
+        amount: Number(pettyForm.amount),
+        notes: pettyForm.notes,
+      });
+      setMsg(`${pettyForm.entry_type === 'income' ? 'Other Income' : 'Expense'} booked in Petty Cash!`);
+      setPettyForm({ ...pettyForm, amount: '', notes: '' });
+      load();
+    } catch (e2) {
+      setErr(e2.message);
+    } finally {
+      setSavingPetty(false);
+    }
+  };
+
+  const settleVanWallet = async (e) => {
+    e.preventDefault();
+    setErr(''); setMsg('');
+    if (!Number(walletSettleAmt) || Number(walletSettleAmt) <= 0) {
+      setErr('Enter a valid settlement amount.');
+      return;
+    }
+    setSettlingWallet(true);
+    try {
+      await api.post('/api/driver-wallet/settle', {
+        amount: Number(walletSettleAmt),
+        notes: 'Driver wallet shortage payment',
+      });
+      setMsg('Wallet balance settled!');
+      setWalletSettleAmt('');
+      load();
+    } catch (e2) {
+      setErr(e2.message);
+    } finally {
+      setSettlingWallet(false);
+    }
+  };
+
   const submitClosing = async (e) => {
     e.preventDefault(); setErr(''); setMsg('');
     const col = shiftData.collections || {};
+    const expCashNet = col.expected_cash_net !== undefined ? Number(col.expected_cash_net) : Number(col.cash || 0);
     try {
       await api.post('/api/shifts/close', {
-        declared_cash: declCash !== '' ? Number(declCash) : (col.cash || 0),
+        declared_cash: declCash !== '' ? Number(declCash) : expCashNet,
         declared_card: declCard !== '' ? Number(declCard) : (col.card || 0),
         declared_qr: declQr !== '' ? Number(declQr) : (col.qr_pay || 0),
         declared_bank_transfer: declBank !== '' ? Number(declBank) : (col.bank_transfer || 0),
         declared_cheque: declCheque !== '' ? Number(declCheque) : (col.cheque || 0),
+        keep_shortage_in_wallet: keepShortageInWallet,
         driver_notes: driverNotes,
       });
       setMsg('Closing request submitted to Admin App for approval!');
+      setKeepShortageInWallet(false);
       load();
     } catch (e2) { setErr(e2.message); }
   };
@@ -2139,11 +2199,56 @@ export default function VanDriverMobileApp() {
           )}
 
           {/* TAB: DAILY COLLECTIONS & COMPULSORY CLOSING */}
-          {activeTab === 'closing' && (
+          {activeTab === 'closing' && (() => {
+            const expCashNet = col.expected_cash_net !== undefined ? Number(col.expected_cash_net) : Number(col.cash || 0);
+            const dCash = declCash !== '' ? Number(declCash) : expCashNet;
+            const dCard = declCard !== '' ? Number(declCard) : Number(col.card || 0);
+            const dQr = declQr !== '' ? Number(declQr) : Number(col.qr_pay || 0);
+            const dBank = declBank !== '' ? Number(declBank) : Number(col.bank_transfer || 0);
+            const dCheque = declCheque !== '' ? Number(declCheque) : Number(col.cheque || 0);
+            const totalExpected = expCashNet + Number(col.card || 0) + Number(col.qr_pay || 0) + Number(col.bank_transfer || 0) + Number(col.cheque || 0);
+            const totalDeclared = dCash + dCard + dQr + dBank + dCheque;
+            const shortageAmt = Math.max(0, Number((totalExpected - totalDeclared).toFixed(3)));
+            const walletBal = Number(shiftData.driver_wallet_balance ?? pettyCashData.wallet_balance ?? 0);
+
+            return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {/* Driver Wallet & Unclosed Shifts Summary */}
+              <div className="card" style={{ borderLeft: `4px solid ${walletBal > 0 ? '#e11d48' : '#059669'}` }}>
+                <div className="card-title" style={{ flexWrap: 'wrap', gap: 6 }}>
+                  <span>Driver Wallet (Shortage Balance)</span>
+                  <span className={`badge mono ${walletBal > 0 ? 'badge-rose' : 'badge-emerald'}`} style={{ fontSize: 12 }}>
+                    {formatMoney(walletBal)}
+                  </span>
+                </div>
+                {Number(col.unclosed_shifts_count || 0) > 0 && (
+                  <div style={{ fontSize: 11.5, color: '#475569', marginBottom: 8 }}>
+                    Closing includes <strong>{col.unclosed_shifts_count}</strong> unclosed shift(s)
+                    {Array.isArray(col.unclosed_dates) && col.unclosed_dates.length > 0 && (
+                      <> &bull; Dates: <span className="mono">{col.unclosed_dates.join(', ')}</span></>
+                    )}
+                  </div>
+                )}
+                {walletBal > 0.0005 && (
+                  <form onSubmit={settleVanWallet} style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                    <input
+                      type="number"
+                      step="0.001"
+                      className="form-control mono"
+                      placeholder="Settle amount..."
+                      value={walletSettleAmt}
+                      onChange={(e) => setWalletSettleAmt(e.target.value)}
+                    />
+                    <button type="submit" className="btn btn-emerald btn-sm" disabled={settlingWallet}>
+                      {settlingWallet ? 'Saving...' : 'Pay Wallet'}
+                    </button>
+                  </form>
+                )}
+              </div>
+
               <div className="card">
                 <div className="card-title" style={{ flexWrap: 'wrap', gap: 6 }}>
-                  <span>Current Shift Split Collections</span>
+                  <span>All Unclosed Shifts &amp; Days Collections</span>
                   {(() => {
                     const curShift = getCurrentShift(getVendorShifts(vendor));
                     return curShift ? (
@@ -2153,8 +2258,13 @@ export default function VanDriverMobileApp() {
                 </div>
                 <div className="grid-2" style={{ gap: 8 }}>
                   <div style={{ padding: 8, background: '#ecfdf5', borderRadius: 6 }}>
-                    <div style={{ fontSize: 11, color: '#065f46', fontWeight: 700 }}><Banknote size={13} /> Cash</div>
+                    <div style={{ fontSize: 11, color: '#065f46', fontWeight: 700 }}><Banknote size={13} /> Cash Collected</div>
                     <div className="mono" style={{ fontWeight: 800 }}>{formatMoney(col.cash)}</div>
+                    {(Number(col.petty_cash_income || 0) > 0 || Number(col.petty_cash_expense || 0) > 0) && (
+                      <div className="mono" style={{ fontSize: 10, color: '#047857', marginTop: 2 }}>
+                        Net Cash: <strong>{formatMoney(expCashNet)}</strong>
+                      </div>
+                    )}
                   </div>
                   <div style={{ padding: 8, background: '#eff6ff', borderRadius: 6 }}>
                     <div style={{ fontSize: 11, color: '#1e40af', fontWeight: 700 }}><CreditCard size={13} /> Card</div>
@@ -2179,6 +2289,99 @@ export default function VanDriverMobileApp() {
                 </div>
               </div>
 
+              {/* Van Petty Cash: Expenses & Other Income */}
+              <form onSubmit={addVanPettyCash} className="card">
+                <div className="card-title">
+                  <span>Van Petty Cash (Expense / Other Income)</span>
+                  <span className="badge badge-slate mono">
+                    +Inc: {formatMoney(col.petty_cash_income)} | -Exp: {formatMoney(col.petty_cash_expense)}
+                  </span>
+                </div>
+                <div className="grid-2" style={{ gap: 8 }}>
+                  <div className="form-group">
+                    <label className="form-label">Type</label>
+                    <select
+                      className="form-control"
+                      value={pettyForm.entry_type}
+                      onChange={(e) => setPettyForm({
+                        ...pettyForm,
+                        entry_type: e.target.value,
+                        category: e.target.value === 'income' ? 'Other Income' : 'Fuel',
+                      })}
+                    >
+                      <option value="expense">Expense (-)</option>
+                      <option value="income">Other Income (+)</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Category</label>
+                    <select
+                      className="form-control"
+                      value={pettyForm.category}
+                      onChange={(e) => setPettyForm({ ...pettyForm, category: e.target.value })}
+                    >
+                      {pettyForm.entry_type === 'income' ? (
+                        <>
+                          <option value="Other Income">Other Income</option>
+                          <option value="Scrap / Empty Box">Scrap / Empty Box</option>
+                          <option value="Delivery Fee">Delivery Fee</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="Fuel">Fuel</option>
+                          <option value="Toll / Parking">Toll / Parking</option>
+                          <option value="Food / Allowance">Food / Allowance</option>
+                          <option value="Van Maintenance">Van Maintenance</option>
+                          <option value="Misc Expense">Misc Expense</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+                </div>
+                <div className="grid-2" style={{ gap: 8 }}>
+                  <div className="form-group">
+                    <label className="form-label">Amount ({vendor?.currency || 'BHD'})</label>
+                    <input
+                      type="number"
+                      step="0.001"
+                      className="form-control mono"
+                      placeholder="0.000"
+                      value={pettyForm.amount}
+                      onChange={(e) => setPettyForm({ ...pettyForm, amount: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Notes</label>
+                    <input
+                      className="form-control"
+                      placeholder="Details..."
+                      value={pettyForm.notes}
+                      onChange={(e) => setPettyForm({ ...pettyForm, notes: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <button type="submit" className="btn btn-blue btn-sm" style={{ width: '100%' }} disabled={savingPetty}>
+                  {savingPetty ? 'Saving...' : `Book ${pettyForm.entry_type === 'income' ? 'Other Income' : 'Expense'}`}
+                </button>
+                {(pettyCashData.entries || []).length > 0 && (
+                  <div style={{ marginTop: 10, maxHeight: 150, overflowY: 'auto', borderTop: '1px solid #e2e8f0', paddingTop: 6 }}>
+                    {(pettyCashData.entries || []).slice(0, 10).map((pc) => (
+                      <div key={pc.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, padding: '4px 0', borderBottom: '1px solid #f1f5f9' }}>
+                        <span>
+                          <span className={`badge ${pc.entry_type === 'income' ? 'badge-emerald' : 'badge-rose'}`} style={{ fontSize: 9.5, marginRight: 5 }}>
+                            {pc.entry_type === 'income' ? '+' : '-'} {pc.category}
+                          </span>
+                          {pc.notes || pc.entry_date}
+                        </span>
+                        <strong className="mono" style={{ color: pc.entry_type === 'income' ? '#059669' : '#be123c' }}>
+                          {pc.entry_type === 'income' ? '+' : '-'}{formatMoney(pc.amount)}
+                        </strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </form>
+
               {shift?.status === 'open' && (
                 <form onSubmit={submitClosing} className="card">
                   <div className="card-title">Submit Compulsory Shift Closing</div>
@@ -2198,17 +2401,46 @@ export default function VanDriverMobileApp() {
                       </button>
                     </div>
                   )}
-                  <div className="form-group"><label className="form-label">Declared Cash (Exp: {Number(col.cash || 0).toFixed(3)})</label><input className="form-control mono" type="number" step="0.001" placeholder={Number(col.cash || 0).toFixed(3)} value={declCash} onChange={e => setDeclCash(e.target.value)} /></div>
+                  <div className="form-group"><label className="form-label">Declared Cash (Net Exp: {expCashNet.toFixed(3)})</label><input className="form-control mono" type="number" step="0.001" placeholder={expCashNet.toFixed(3)} value={declCash} onChange={e => setDeclCash(e.target.value)} /></div>
                   <div className="form-group"><label className="form-label">Declared Card (Exp: {Number(col.card || 0).toFixed(3)})</label><input className="form-control mono" type="number" step="0.001" placeholder={Number(col.card || 0).toFixed(3)} value={declCard} onChange={e => setDeclCard(e.target.value)} /></div>
                   <div className="form-group"><label className="form-label">Declared QR Pay (Exp: {Number(col.qr_pay || 0).toFixed(3)})</label><input className="form-control mono" type="number" step="0.001" placeholder={Number(col.qr_pay || 0).toFixed(3)} value={declQr} onChange={e => setDeclQr(e.target.value)} /></div>
                   <div className="form-group"><label className="form-label">Declared Bank Transfer (Exp: {Number(col.bank_transfer || 0).toFixed(3)})</label><input className="form-control mono" type="number" step="0.001" placeholder={Number(col.bank_transfer || 0).toFixed(3)} value={declBank} onChange={e => setDeclBank(e.target.value)} /></div>
                   <div className="form-group"><label className="form-label">Declared Cheque (Exp: {Number(col.cheque || 0).toFixed(3)})</label><input className="form-control mono" type="number" step="0.001" placeholder={Number(col.cheque || 0).toFixed(3)} value={declCheque} onChange={e => setDeclCheque(e.target.value)} /></div>
                   <div className="form-group"><label className="form-label">Notes</label><input className="form-control" value={driverNotes} onChange={e => setDriverNotes(e.target.value)} placeholder="End of shift remarks" /></div>
+
+                  <div style={{ padding: 10, borderRadius: 8, background: '#f8fafc', border: '1px solid #e2e8f0', marginBottom: 10, fontSize: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Total Expected:</span>
+                      <strong className="mono">{formatMoney(totalExpected)}</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                      <span>Total Declared:</span>
+                      <strong className="mono">{formatMoney(totalDeclared)}</strong>
+                    </div>
+                    {shortageAmt > 0.0005 && (
+                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #fecaca', color: '#b91c1c' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800 }}>
+                          <span>Shortage Amount:</span>
+                          <span className="mono">{formatMoney(shortageAmt)}</span>
+                        </div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', color: '#0f172a' }}>
+                          <input
+                            type="checkbox"
+                            checked={keepShortageInWallet}
+                            onChange={(e) => setKeepShortageInWallet(e.target.checked)}
+                          />
+                          <span>Keep Shortage ({formatMoney(shortageAmt)}) in Driver Wallet &amp; Close Account</span>
+                        </label>
+                      </div>
+                    )}
+                  </div>
+
                   <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Submit Closing to Admin App</button>
                 </form>
               )}
             </div>
-          )}
+            );
+          })()}
 
           {/* TAB: SHOP LEDGERS & ON-ACCOUNT COLLECTION */}
           {activeTab === 'ledgers' && (

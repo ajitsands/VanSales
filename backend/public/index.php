@@ -42,6 +42,7 @@ use App\Controllers\TransferController;
 use App\Controllers\RouteController;
 use App\Controllers\SalesController;
 use App\Controllers\ShiftController;
+use App\Controllers\PettyCashController;
 use App\Controllers\DashboardController;
 use App\Controllers\LedgerChequeController;
 use App\Controllers\AttachmentController;
@@ -142,6 +143,11 @@ $router->add('POST', '/api/shifts/change', [ShiftController::class, 'changeShift
 $router->add('POST', '/api/shifts/close', [ShiftController::class, 'submitClosing'], $vendorUsers);
 $router->add('GET', '/api/closings', [ShiftController::class, 'listClosings'], [$auth, AuthMiddleware::requirePermission('reports')]);
 $router->add('POST', '/api/closings/{id}/review', [ShiftController::class, 'reviewClosing'], [$auth, AuthMiddleware::requireRole(['admin'])]);
+
+// Petty Cash (Van & Main Store Expenses / Other Income) & Driver Wallet
+$router->add('GET', '/api/petty-cash', [PettyCashController::class, 'listEntries'], $vendorUsers);
+$router->add('POST', '/api/petty-cash', [PettyCashController::class, 'createEntry'], $vendorUsers);
+$router->add('POST', '/api/driver-wallet/settle', [PettyCashController::class, 'settleWallet'], $vendorUsers);
 
 // Shop / Customer Ledgers & Cheque Reconciliation
 $router->add('GET', '/api/shop-ledgers', [LedgerChequeController::class, 'listShopLedgers'], $vendorUsers);

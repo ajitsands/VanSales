@@ -48,6 +48,45 @@ export default function MainStorePosPage() {
   const [invDatePreset, setInvDatePreset] = useState('today');
   const [invFromDate, setInvFromDate] = useState(() => toLocalDateStr(new Date()));
   const [invToDate, setInvToDate] = useState(() => toLocalDateStr(new Date()));
+  const [storePettyOpen, setStorePettyOpen] = useState(false);
+  const [storePettyData, setStorePettyData] = useState({ entries: [], summary: { total_income: 0, total_expense: 0, net_petty: 0 } });
+  const [storePettyForm, setStorePettyForm] = useState({ entry_type: 'expense', category: 'Office / Store Expense', amount: '', notes: '' });
+  const [savingStorePetty, setSavingStorePetty] = useState(false);
+
+  const loadStorePettyCash = async () => {
+    try {
+      const res = await api.get('/api/petty-cash?source_type=main_store');
+      setStorePettyData(res);
+    } catch (e2) {
+      setErr(e2.message);
+    }
+  };
+
+  const submitStorePettyCash = async (e) => {
+    e.preventDefault();
+    setErr(''); setMsg('');
+    if (!Number(storePettyForm.amount) || Number(storePettyForm.amount) <= 0) {
+      setErr('Enter a valid petty cash amount.');
+      return;
+    }
+    setSavingStorePetty(true);
+    try {
+      await api.post('/api/petty-cash', {
+        source_type: 'main_store',
+        entry_type: storePettyForm.entry_type,
+        category: storePettyForm.category,
+        amount: Number(storePettyForm.amount),
+        notes: storePettyForm.notes,
+      });
+      setMsg(`Store ${storePettyForm.entry_type === 'income' ? 'Other Income' : 'Expense'} recorded!`);
+      setStorePettyForm({ ...storePettyForm, amount: '', notes: '' });
+      loadStorePettyCash();
+    } catch (e2) {
+      setErr(e2.message);
+    } finally {
+      setSavingStorePetty(false);
+    }
+  };
   const [invShiftPreset, setInvShiftPreset] = useState('all');
   const [invFromTime, setInvFromTime] = useState('00:00');
   const [invToTime, setInvToTime] = useState('23:59');
@@ -275,6 +314,16 @@ export default function MainStorePosPage() {
             <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>
               Showing {filteredPosItems.length} items
             </span>
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              onClick={() => {
+                setStorePettyOpen(true);
+                loadStorePettyCash();
+              }}
+            >
+              <Banknote size={14} color="#059669" /> Store Petty Cash
+            </button>
           </div>
 
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -1598,6 +1647,126 @@ export default function MainStorePosPage() {
           </div>
         );
       })()}
+
+      {storePettyOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.55)',
+            zIndex: 1100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+          onClick={() => setStorePettyOpen(false)}
+        >
+          <div
+            className="card"
+            style={{
+              width: '100%',
+              maxWidth: 760,
+              maxHeight: '88vh',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              margin: 0,
+              boxShadow: '0 20px 45px rgba(15, 23, 42, 0.25)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 12, borderBottom: '1px solid #e2e8f0' }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a' }}>Main Store Petty Cash (Expense &amp; Other Income)</div>
+                <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: 12 }}>
+                  <span>Other Income: <strong className="mono" style={{ color: '#059669' }}>+{formatMoney(storePettyData.summary?.total_income)}</strong></span>
+                  <span>Expenses: <strong className="mono" style={{ color: '#be123c' }}>-{formatMoney(storePettyData.summary?.total_expense)}</strong></span>
+                  <span>Net: <strong className="mono">{formatMoney(storePettyData.summary?.net_petty)}</strong></span>
+                </div>
+              </div>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => setStorePettyOpen(false)}>
+                <X size={14} /> Close
+              </button>
+            </div>
+
+            <form onSubmit={submitStorePettyCash} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8, padding: '12px 0', borderBottom: '1px solid #e2e8f0', alignItems: 'end' }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Type</label>
+                <select
+                  className="form-control"
+                  value={storePettyForm.entry_type}
+                  onChange={(e) => setStorePettyForm({
+                    ...storePettyForm,
+                    entry_type: e.target.value,
+                    category: e.target.value === 'income' ? 'Other Income' : 'Store Expense',
+                  })}
+                >
+                  <option value="expense">Expense (-)</option>
+                  <option value="income">Other Income (+)</option>
+                </select>
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Category</label>
+                <input
+                  className="form-control"
+                  value={storePettyForm.category}
+                  onChange={(e) => setStorePettyForm({ ...storePettyForm, category: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Amount ({vendor?.currency || 'BHD'})</label>
+                <input
+                  type="number"
+                  step="0.001"
+                  className="form-control mono"
+                  placeholder="0.000"
+                  value={storePettyForm.amount}
+                  onChange={(e) => setStorePettyForm({ ...storePettyForm, amount: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Notes</label>
+                <input
+                  className="form-control"
+                  placeholder="Description..."
+                  value={storePettyForm.notes}
+                  onChange={(e) => setStorePettyForm({ ...storePettyForm, notes: e.target.value })}
+                />
+              </div>
+              <button type="submit" className="btn btn-primary btn-sm" disabled={savingStorePetty}>
+                {savingStorePetty ? 'Saving...' : 'Book Entry'}
+              </button>
+            </form>
+
+            <div style={{ overflowY: 'auto', marginTop: 10 }}>
+              <DataTable
+                data={storePettyData.entries || []}
+                compact
+                searchPlaceholder="Search category, notes, user..."
+                exportFilename="store-petty-cash.csv"
+                columns={[
+                  { key: 'entry_date', label: 'Date', sortValue: (p) => p.entry_date || '', render: (p) => <span className="mono">{p.entry_date}</span> },
+                  {
+                    key: 'entry_type',
+                    label: 'Type',
+                    sortValue: (p) => p.entry_type || '',
+                    render: (p) => (
+                      <span className={`badge ${p.entry_type === 'income' ? 'badge-emerald' : 'badge-rose'}`}>
+                        {p.entry_type === 'income' ? 'Income (+)' : 'Expense (-)'}
+                      </span>
+                    ),
+                  },
+                  { key: 'category', label: 'Category', sortValue: (p) => p.category || '' },
+                  { key: 'amount', label: 'Amount', sortValue: (p) => Number(p.amount || 0), render: (p) => <span className="mono" style={{ fontWeight: 700 }}>{formatMoney(p.amount)}</span> },
+                  { key: 'notes', label: 'Notes', sortValue: (p) => p.notes || '' },
+                  { key: 'created_by_name', label: 'By', sortValue: (p) => p.created_by_name || '' },
+                ]}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
