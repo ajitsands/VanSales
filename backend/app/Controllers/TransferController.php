@@ -508,6 +508,83 @@ class TransferController
         }
     }
 
+    public function confirmAllTransfers(Request $req): void
+    {
+        $vendorId = (int)$req->user['vendor_id'];
+        $vanId = (int)($req->user['van_id'] ?: ($req->body()['van_id'] ?? 0));
+        $otp = trim((string)($req->body()['otp_code'] ?? ''));
+
+        if (!$vanId) {
+            Response::error('Van ID is required', 422);
+        }
+
+        $pdo = Database::getConnection();
+        $stmt = $pdo->prepare("SELECT * FROM stock_transfers WHERE vendor_id = ? AND to_van_id = ? AND status = 'pending_confirm' ORDER BY id ASC");
+        $stmt->execute([$vendorId, $vanId]);
+        $pending = $stmt->fetchAll();
+
+        if (empty($pending)) {
+            Response::error('No pending transfers found for this Van', 404);
+        }
+
+        if ($otp !== '') {
+            $matched = false;
+            foreach ($pending as $trf) {
+                if ((string)($trf['otp_code'] ?? '') === $otp) {
+                    $matched = true;
+                    break;
+                }
+            }
+            if (!$matched) {
+                Response::error('Invalid OTP verification code', 422);
+            }
+        }
+
+        try {
+            $pdo->beginTransaction();
+
+            $lStmt = $pdo->prepare("SELECT * FROM stock_transfer_lines WHERE transfer_id = ?");
+            $uStmt = $pdo->prepare("UPDATE stock_transfers SET status = 'completed', confirmed_by = ?, confirmed_at = NOW() WHERE id = ?");
+            $reqIds = [];
+
+            foreach ($pending as $trf) {
+                $tid = (int)$trf['id'];
+                $lStmt->execute([$tid]);
+                foreach ($lStmt->fetchAll() as $ln) {
+                    InventoryModel::addBatch(
+                        $pdo,
+                        $vendorId,
+                        'van',
+                        $vanId,
+                        (int)$ln['item_id'],
+                        null,
+                        $ln['batch_no'],
+                        $ln['expiry_date'],
+                        (float)$ln['unit_cost'],
+                        (float)$ln['qty'],
+                        isset($ln['selling_price']) && $ln['selling_price'] !== null ? (float)$ln['selling_price'] : null
+                    );
+                }
+                $uStmt->execute([$req->user['id'], $tid]);
+                if (!empty($trf['request_id'])) {
+                    $reqIds[(int)$trf['request_id']] = true;
+                }
+            }
+
+            foreach (array_keys($reqIds) as $rid) {
+                self::syncRequestStatus($pdo, $vendorId, (int)$rid);
+            }
+
+            $pdo->commit();
+            Response::ok(['confirmed_count' => count($pending)], count($pending) . ' transfer(s) accepted into Van Store');
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            Response::error('Confirm all failed: ' . $e->getMessage(), 400);
+        }
+    }
+
     public function cancelTransfer(Request $req): void
     {
         $vendorId = (int)$req->user['vendor_id'];

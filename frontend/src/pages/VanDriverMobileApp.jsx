@@ -153,6 +153,8 @@ export default function VanDriverMobileApp() {
   const [v2vFromDate, setV2vFromDate] = useState(todayStr);
   const [v2vToDate, setV2vToDate] = useState(todayStr);
   const [v2vHistoryTab, setV2vHistoryTab] = useState('waiting');
+  const [bulkOtp, setBulkOtp] = useState('');
+  const [confirmingAll, setConfirmingAll] = useState(false);
 
   const load = async () => {
     try {
@@ -2145,6 +2147,42 @@ export default function VanDriverMobileApp() {
                     <span>Ready to Pickup / Incoming Transfers</span>
                     <span className="badge badge-amber">{pendingIncoming.length} Ready</span>
                   </div>
+                  {pendingIncoming.length > 1 && (
+                    <div style={{ padding: '10px', marginBottom: 10, background: '#dbeafe', borderRadius: 8, border: '1px solid #93c5fd' }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 800, color: '#1e3a8a', marginBottom: 6 }}>
+                        Accept All {pendingIncoming.length} Transfers with Single OTP (e.g. {pendingIncoming[0]?.otp_code})
+                      </div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <input
+                          className="form-control mono"
+                          placeholder={`Enter 1 OTP (${pendingIncoming[0]?.otp_code})`}
+                          value={bulkOtp}
+                          onChange={(e) => setBulkOtp(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-emerald btn-sm"
+                          disabled={confirmingAll}
+                          onClick={async () => {
+                            setErr(''); setMsg('');
+                            setConfirmingAll(true);
+                            try {
+                              const res = await api.post('/api/transfers/confirm-all', { otp_code: bulkOtp });
+                              setMsg(res?.message || `${pendingIncoming.length} transfers accepted into Van Store!`);
+                              setBulkOtp('');
+                              load();
+                            } catch (e2) {
+                              setErr(e2.message);
+                            } finally {
+                              setConfirmingAll(false);
+                            }
+                          }}
+                        >
+                          {confirmingAll ? 'Accepting...' : `Accept All (${pendingIncoming.length})`}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {pendingIncoming.map(t => (
                     <div key={t.id} style={{ padding: '9px 10px', marginBottom: 8, background: '#fff', borderRadius: 8, border: '1px solid #bfdbfe' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>

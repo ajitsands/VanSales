@@ -144,9 +144,11 @@ export default function InventoryTransfersPage() {
         const tQty = Number(reqTransferQtys[key] || 0);
         if (tQty > 0) {
           const targetVanId = dispatchForm.to_van_id ? Number(dispatchForm.to_van_id) : Number(r.van_id);
-          const groupKey = `${targetVanId}_${r.id}`;
+          const groupKey = `${targetVanId}`;
           if (!filledByReq[groupKey]) {
-            filledByReq[groupKey] = { vanId: targetVanId, requestId: r.id, requestNo: r.request_no, lines: [] };
+            filledByReq[groupKey] = { vanId: targetVanId, requestId: r.id, requestNos: [r.request_no || `#${r.id}`], lines: [] };
+          } else if (r.request_no && !filledByReq[groupKey].requestNos.includes(r.request_no)) {
+            filledByReq[groupKey].requestNos.push(r.request_no);
           }
           const existingLine = filledByReq[groupKey].lines.find(l => l.item_id === Number(x.item_id));
           if (existingLine) {
@@ -172,7 +174,7 @@ export default function InventoryTransfersPage() {
         const res = await api.post('/api/transfers/store-to-van', {
           to_van_id: Number(group.vanId),
           request_id: group.requestId,
-          notes: `Request Fulfillment (${group.requestNo || `#${group.requestId}`})`,
+          notes: `Request Fulfillment (${(group.requestNos || []).join(', ')})`,
           lines: group.lines,
         });
         createdTransfers.push(`${res.transfer_no} (OTP: ${res.otp_code})`);
