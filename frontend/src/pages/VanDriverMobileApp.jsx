@@ -48,6 +48,10 @@ export default function VanDriverMobileApp() {
   const [priceModal, setPriceModal] = useState(null);
   const [priceInput, setPriceInput] = useState('');
   const [priceErr, setPriceErr] = useState('');
+  const [changeShiftOpen, setChangeShiftOpen] = useState(false);
+  const [editShiftName, setEditShiftName] = useState('Morning Shift');
+  const [editShiftType, setEditShiftType] = useState('same_day');
+  const [changingShift, setChangingShift] = useState(false);
 
   const showToast = (type, text) => {
     if (!text) return;
@@ -700,9 +704,26 @@ export default function VanDriverMobileApp() {
               <div style={{ fontSize: 10.5, opacity: 0.8 }}>{vendor?.company_name}</div>
             </div>
           </div>
-          <span className={`badge ${shift?.status === 'open' ? 'badge-emerald' : 'badge-amber'}`} style={{ fontSize: 10 }}>
-            {shift?.status === 'open' ? shift.shift_name : (shift?.status || 'Closed')}
-          </span>
+          {shift?.status === 'open' ? (
+            <button
+              type="button"
+              onClick={() => {
+                setEditShiftName(shift.shift_name || 'Morning Shift');
+                setEditShiftType(shift.shift_type || 'same_day');
+                setChangeShiftOpen(true);
+              }}
+              className="badge badge-emerald"
+              style={{ fontSize: 10, border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              title="Tap to change active shift"
+            >
+              <span>{shift.shift_name}</span>
+              <Pencil size={10} />
+            </button>
+          ) : (
+            <span className="badge badge-amber" style={{ fontSize: 10 }}>
+              {shift?.status || 'Closed'}
+            </span>
+          )}
         </header>
 
         {/* Left Slider Drawer */}
@@ -2161,6 +2182,22 @@ export default function VanDriverMobileApp() {
               {shift?.status === 'open' && (
                 <form onSubmit={submitClosing} className="card">
                   <div className="card-title">Submit Compulsory Shift Closing</div>
+                  {shift && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, padding: '8px 10px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 12 }}>
+                      <span>Active: <strong>{shift.shift_name}</strong> ({shift.shift_type === 'multi_day' ? 'Multi-Day' : 'Same-Day'})</span>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-sm"
+                        onClick={() => {
+                          setEditShiftName(shift.shift_name || 'Morning Shift');
+                          setEditShiftType(shift.shift_type || 'same_day');
+                          setChangeShiftOpen(true);
+                        }}
+                      >
+                        <Pencil size={12} /> Change Shift
+                      </button>
+                    </div>
+                  )}
                   <div className="form-group"><label className="form-label">Declared Cash (Exp: {Number(col.cash || 0).toFixed(3)})</label><input className="form-control mono" type="number" step="0.001" placeholder={Number(col.cash || 0).toFixed(3)} value={declCash} onChange={e => setDeclCash(e.target.value)} /></div>
                   <div className="form-group"><label className="form-label">Declared Card (Exp: {Number(col.card || 0).toFixed(3)})</label><input className="form-control mono" type="number" step="0.001" placeholder={Number(col.card || 0).toFixed(3)} value={declCard} onChange={e => setDeclCard(e.target.value)} /></div>
                   <div className="form-group"><label className="form-label">Declared QR Pay (Exp: {Number(col.qr_pay || 0).toFixed(3)})</label><input className="form-control mono" type="number" step="0.001" placeholder={Number(col.qr_pay || 0).toFixed(3)} value={declQr} onChange={e => setDeclQr(e.target.value)} /></div>
@@ -2715,6 +2752,101 @@ export default function VanDriverMobileApp() {
           </div>
         </div>
       )}
+      {changeShiftOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.55)',
+            zIndex: 1150,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+          onClick={() => !changingShift && setChangeShiftOpen(false)}
+        >
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setErr('');
+              setMsg('');
+              setChangingShift(true);
+              try {
+                const res = await api.post('/api/shifts/change', {
+                  shift_name: editShiftName,
+                  shift_type: editShiftType,
+                });
+                setShiftData((prev) => ({
+                  ...prev,
+                  shift: prev?.shift ? { ...prev.shift, shift_name: res.shift_name, shift_type: res.shift_type } : prev?.shift,
+                }));
+                setMsg(`Active shift changed to ${res.shift_name} (${res.shift_type === 'multi_day' ? 'Multi-Day' : 'Same-Day'})`);
+                setChangeShiftOpen(false);
+                load();
+              } catch (e2) {
+                setErr(e2.message);
+              } finally {
+                setChangingShift(false);
+              }
+            }}
+            className="card"
+            style={{
+              width: '100%',
+              maxWidth: 380,
+              margin: 0,
+              boxShadow: '0 20px 45px rgba(15, 23, 42, 0.28)',
+              borderTop: '4px solid #059669',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <span style={{ fontWeight: 800, fontSize: 15, color: '#0f172a' }}>Change Active Shift</span>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => !changingShift && setChangeShiftOpen(false)}>
+                <X size={14} />
+              </button>
+            </div>
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label className="form-label">Shift Name</label>
+              <select
+                className="form-control"
+                value={editShiftName}
+                onChange={(e) => setEditShiftName(e.target.value)}
+              >
+                {Array.from(new Set([
+                  'Morning Shift',
+                  'Evening Shift',
+                  'Multi-Day Route',
+                  ...getVendorShifts(vendor).map((s) => s.name),
+                  editShiftName,
+                ].filter(Boolean))).map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group" style={{ marginBottom: 14 }}>
+              <label className="form-label">Shift Mode</label>
+              <select
+                className="form-control"
+                value={editShiftType}
+                onChange={(e) => setEditShiftType(e.target.value)}
+              >
+                <option value="same_day">Same-Day</option>
+                <option value="multi_day">Multi-Day</option>
+              </select>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button type="button" className="btn btn-outline btn-sm" disabled={changingShift} onClick={() => setChangeShiftOpen(false)}>
+                Cancel
+              </button>
+              <button type="submit" className="btn btn-emerald btn-sm" disabled={changingShift}>
+                {changingShift ? 'Updating...' : 'Save Shift'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {priceModal && (
         <div
           style={{

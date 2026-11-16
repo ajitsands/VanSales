@@ -84,6 +84,40 @@ class ShiftController
         Response::ok(['shift_id' => (int)$pdo->lastInsertId()], "{$shiftName} ({$shiftType}) opened", 201);
     }
 
+    public function changeShift(Request $req): void
+    {
+        $vendorId = (int)$req->user['vendor_id'];
+        $vanId = (int)($req->user['van_id'] ?: ($req->body()['van_id'] ?? 0));
+        $b = $req->body();
+        $shiftName = trim((string)($b['shift_name'] ?? ''));
+        $shiftType = ($b['shift_type'] ?? 'same_day') === 'multi_day' ? 'multi_day' : 'same_day';
+
+        if (!$vanId) {
+            Response::error('Van ID is required', 422);
+        }
+        if ($shiftName === '') {
+            Response::error('Shift name is required', 422);
+        }
+
+        $pdo = Database::getConnection();
+        $stmt = $pdo->prepare("SELECT * FROM van_shifts WHERE vendor_id = ? AND van_id = ? AND status = 'open' ORDER BY id DESC LIMIT 1");
+        $stmt->execute([$vendorId, $vanId]);
+        $active = $stmt->fetch();
+
+        if (!$active) {
+            Response::error('No active open shift found to change.', 404);
+        }
+
+        $upd = $pdo->prepare("UPDATE van_shifts SET shift_name = ?, shift_type = ? WHERE id = ?");
+        $upd->execute([$shiftName, $shiftType, (int)$active['id']]);
+
+        Response::ok([
+            'shift_id'   => (int)$active['id'],
+            'shift_name' => $shiftName,
+            'shift_type' => $shiftType,
+        ], "Shift updated to {$shiftName} ({$shiftType})");
+    }
+
     public function submitClosing(Request $req): void
     {
         $vendorId = (int)$req->user['vendor_id'];

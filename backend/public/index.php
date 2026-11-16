@@ -138,6 +138,7 @@ $router->add('GET', '/api/invoice-archives', [SalesController::class, 'listArchi
 // Shifts (Same-Day & Multi-Day) & Compulsory Closing Requests
 $router->add('GET', '/api/shifts/current', [ShiftController::class, 'currentShift'], $vendorUsers);
 $router->add('POST', '/api/shifts/open', [ShiftController::class, 'openShift'], $vendorUsers);
+$router->add('POST', '/api/shifts/change', [ShiftController::class, 'changeShift'], $vendorUsers);
 $router->add('POST', '/api/shifts/close', [ShiftController::class, 'submitClosing'], $vendorUsers);
 $router->add('GET', '/api/closings', [ShiftController::class, 'listClosings'], [$auth, AuthMiddleware::requirePermission('reports')]);
 $router->add('POST', '/api/closings/{id}/review', [ShiftController::class, 'reviewClosing'], [$auth, AuthMiddleware::requireRole(['admin'])]);
