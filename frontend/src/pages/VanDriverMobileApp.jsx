@@ -152,6 +152,7 @@ export default function VanDriverMobileApp() {
   const [pettyToDate, setPettyToDate] = useState(todayStr);
   const [v2vFromDate, setV2vFromDate] = useState(todayStr);
   const [v2vToDate, setV2vToDate] = useState(todayStr);
+  const [v2vHistoryTab, setV2vHistoryTab] = useState('waiting');
 
   const load = async () => {
     try {
@@ -2209,11 +2210,31 @@ export default function VanDriverMobileApp() {
                   return true;
                 });
 
+                const v2vWaiting = v2vHistory.filter((t) => t.status === 'pending_confirm');
+                const v2vAccepted = v2vHistory.filter((t) => t.status === 'completed');
+                const displayedV2v = v2vHistoryTab === 'waiting' ? v2vWaiting : v2vAccepted;
+
                 return (
                   <div className="card">
                     <div className="card-title" style={{ flexWrap: 'wrap', gap: 6 }}>
                       <span>Van-to-Van Transfer History</span>
-                      <span className="badge badge-blue mono">{v2vHistory.length} Transfer(s)</span>
+                      <span className="badge badge-blue mono">{v2vHistory.length} Total</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+                      <button
+                        type="button"
+                        className={`btn btn-sm ${v2vHistoryTab === 'waiting' ? 'btn-primary' : 'btn-outline'}`}
+                        onClick={() => setV2vHistoryTab('waiting')}
+                      >
+                        Waiting List ({v2vWaiting.length})
+                      </button>
+                      <button
+                        type="button"
+                        className={`btn btn-sm ${v2vHistoryTab === 'accepted' ? 'btn-emerald' : 'btn-outline'}`}
+                        onClick={() => setV2vHistoryTab('accepted')}
+                      >
+                        Accepted List ({v2vAccepted.length})
+                      </button>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                       <div>
@@ -2244,13 +2265,13 @@ export default function VanDriverMobileApp() {
                       </button>
                     </div>
 
-                    {v2vHistory.length === 0 ? (
+                    {displayedV2v.length === 0 ? (
                       <div style={{ textAlign: 'center', padding: 14, fontSize: 12, color: '#64748b' }}>
-                        No Van-to-Van transfers found in selected date range.
+                        No {v2vHistoryTab === 'waiting' ? 'waiting' : 'accepted'} Van-to-Van transfers found in selected date range.
                       </div>
                     ) : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {v2vHistory.map((t) => {
+                        {displayedV2v.map((t) => {
                           const isSent = Number(t.from_van_id) === Number(van?.id);
                           return (
                             <div key={t.id} style={{ padding: '9px 10px', borderRadius: 8, border: '1px solid #e2e8f0', background: '#f8fafc' }}>

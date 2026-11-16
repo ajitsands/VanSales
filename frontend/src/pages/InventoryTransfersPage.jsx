@@ -35,6 +35,7 @@ export default function InventoryTransfersPage() {
   const [confirmPopup, setConfirmPopup] = useState(null);
   const [popupLoading, setPopupLoading] = useState(false);
   const [transferItemsModal, setTransferItemsModal] = useState(null);
+  const [transferStatusTab, setTransferStatusTab] = useState('waiting');
 
   const load = async () => {
     try {
@@ -354,8 +355,11 @@ export default function InventoryTransfersPage() {
   };
 
   const filteredStoreToVanTransfers = transfers.filter((t) => t.transfer_type === 'store_to_van' && inDateRange(t.created_at));
+  const waitingStoreToVan = filteredStoreToVanTransfers.filter((t) => t.status === 'pending_confirm');
+  const acceptedStoreToVan = filteredStoreToVanTransfers.filter((t) => t.status === 'completed');
+  const activeStoreToVanList = transferStatusTab === 'waiting' ? waitingStoreToVan : acceptedStoreToVan;
   const vanTransferGroups = Object.values(
-    filteredStoreToVanTransfers.reduce((acc, t) => {
+    activeStoreToVanList.reduce((acc, t) => {
       const key = String(t.to_van_id || t.to_van_name || 'unknown');
       if (!acc[key]) {
         acc[key] = {
@@ -1506,12 +1510,20 @@ export default function InventoryTransfersPage() {
             <div className="card-title" style={{ flexWrap: 'wrap', gap: 8 }}>
               <span>Transfer List (Store-to-Van Ready to Pickup &amp; Confirmed)</span>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                <span className="badge badge-amber">
-                  {filteredStoreToVanTransfers.filter(t => t.status === 'pending_confirm').length} Ready to Pickup
-                </span>
-                <span className="badge badge-emerald">
-                  {filteredStoreToVanTransfers.filter(t => t.status === 'completed').length} Confirmed
-                </span>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${transferStatusTab === 'waiting' ? 'btn-primary' : 'btn-outline'}`}
+                  onClick={() => setTransferStatusTab('waiting')}
+                >
+                  Waiting List ({waitingStoreToVan.length})
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${transferStatusTab === 'accepted' ? 'btn-emerald' : 'btn-outline'}`}
+                  onClick={() => setTransferStatusTab('accepted')}
+                >
+                  Accepted List ({acceptedStoreToVan.length})
+                </button>
                 {vanTransferGroups.length > 0 && (
                   <>
                     <button
@@ -1683,11 +1695,33 @@ export default function InventoryTransfersPage() {
         </>
       )}
 
-      {tab === 'transfers' && (
+      {tab === 'transfers' && (() => {
+        const waitingAll = transfers.filter(t => t.status === 'pending_confirm');
+        const acceptedAll = transfers.filter(t => t.status === 'completed');
+        const displayedAll = transferStatusTab === 'waiting' ? waitingAll : acceptedAll;
+        return (
         <div className="card">
-          <div className="card-title">Store-to-Van &amp; Van-to-Van Transfer Audit Log</div>
+          <div className="card-title" style={{ flexWrap: 'wrap', gap: 8 }}>
+            <span>Store-to-Van &amp; Van-to-Van Transfer Audit Log</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                type="button"
+                className={`btn btn-sm ${transferStatusTab === 'waiting' ? 'btn-primary' : 'btn-outline'}`}
+                onClick={() => setTransferStatusTab('waiting')}
+              >
+                Waiting List ({waitingAll.length})
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${transferStatusTab === 'accepted' ? 'btn-emerald' : 'btn-outline'}`}
+                onClick={() => setTransferStatusTab('accepted')}
+              >
+                Accepted List ({acceptedAll.length})
+              </button>
+            </div>
+          </div>
           <DataTable
-            data={transfers}
+            data={displayedAll}
             searchPlaceholder="Search transfer #, type, van, SKU..."
             exportFilename="transfer-audit-log.csv"
             columns={[
@@ -1730,12 +1764,13 @@ export default function InventoryTransfersPage() {
                 key: 'status',
                 label: 'Status',
                 sortValue: (t) => t.status || '',
-                render: (t) => <span className={`badge ${t.status === 'completed' ? 'badge-emerald' : 'badge-amber'}`}>{t.status}</span>,
+                render: (t) => <span className={`badge ${t.status === 'completed' ? 'badge-emerald' : t.status === 'cancelled' ? 'badge-rose' : 'badge-amber'}`}>{t.status === 'completed' ? 'Accepted' : t.status}</span>,
               },
             ]}
           />
         </div>
-      )}
+        );
+      })()}
 
       {tab === 'damages' && (
         <div className="card">
