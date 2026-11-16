@@ -155,6 +155,7 @@ export default function VanDriverMobileApp() {
   const [v2vHistoryTab, setV2vHistoryTab] = useState('waiting');
   const [bulkOtp, setBulkOtp] = useState('');
   const [confirmingAll, setConfirmingAll] = useState(false);
+  const [routeShopSearch, setRouteShopSearch] = useState('');
 
   const load = async () => {
     try {
@@ -1339,6 +1340,26 @@ export default function VanDriverMobileApp() {
                   </button>
                 </div>
               </div>
+              <div style={{ position: 'relative' }}>
+                <Search size={15} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
+                <input
+                  className="form-control"
+                  style={{ paddingLeft: 32, paddingRight: routeShopSearch ? 30 : 10, background: '#ffffff' }}
+                  placeholder="Search shop name, code, route, phone..."
+                  value={routeShopSearch}
+                  onChange={(e) => setRouteShopSearch(e.target.value)}
+                />
+                {routeShopSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setRouteShopSearch('')}
+                    aria-label="Clear shop search"
+                    style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'none', cursor: 'pointer', color: '#64748b', display: 'flex' }}
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
               {lastShopLink && (
                 <div className="card" style={{ padding: 10, background: '#eff6ff', borderColor: '#bfdbfe' }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: '#1e3a8a', marginBottom: 4 }}>
@@ -1363,7 +1384,23 @@ export default function VanDriverMobileApp() {
                   </div>
                 </div>
               )}
-              {shops.map(s => (
+              {(() => {
+                const q = routeShopSearch.trim().toLowerCase();
+                const filteredShops = q
+                  ? shops.filter((s) =>
+                      `${s.shop_name || ''} ${s.shop_code || ''} ${s.route_name || ''} ${s.address || ''} ${s.phone || ''}`
+                        .toLowerCase()
+                        .includes(q)
+                    )
+                  : shops;
+                if (filteredShops.length === 0) {
+                  return (
+                    <div className="card" style={{ textAlign: 'center', padding: 20, color: '#64748b', fontSize: 12.5 }}>
+                      No matching shops found.
+                    </div>
+                  );
+                }
+                return filteredShops.map(s => (
                 <div key={s.id} className="card" style={{ padding: 13 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
@@ -1448,7 +1485,8 @@ export default function VanDriverMobileApp() {
                     </button>
                   </div>
                 </div>
-              ))}
+              ));
+              })()}
             </div>
           )}
 
