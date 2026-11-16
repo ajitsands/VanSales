@@ -8,3 +8,7 @@ backend/public/uploads/*
 *.log
 .DS_Store
 Thumbs.db
+mobile-van-app/.gradle/
+mobile-van-app/build/
+mobile-van-app/app/build/
+mobile-van-app/local.properties

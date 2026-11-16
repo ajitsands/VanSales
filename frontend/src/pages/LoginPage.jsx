@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { ShieldCheck, Truck, Building2, Calculator, Lock, User, KeyRound } from 'lucide-react';
+import { Truck, Lock, User, KeyRound } from 'lucide-react';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -20,12 +20,6 @@ export default function LoginPage() {
     } finally {
       setSubmitting(false);
     }
-  };
-
-  const quickFill = (u, p) => {
-    setUsername(u);
-    setPassword(p);
-    setError('');
   };
 
   return (
@@ -115,26 +109,6 @@ export default function LoginPage() {
             <KeyRound size={16} />
             {submitting ? 'Authenticating...' : 'Sign In'}
           </button>
-
-          <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>
-              Quick Demo Logins (4 Major Roles)
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <button type="button" className="btn btn-outline btn-sm" onClick={() => quickFill('superadmin', 'Super@123')}>
-                <ShieldCheck size={14} color="#7c3aed" /> Superadmin
-              </button>
-              <button type="button" className="btn btn-outline btn-sm" onClick={() => quickFill('admin', 'Admin@123')}>
-                <Building2 size={14} color="#2563eb" /> Vendor Admin
-              </button>
-              <button type="button" className="btn btn-outline btn-sm" onClick={() => quickFill('account1', 'Account@123')}>
-                <Calculator size={14} color="#059669" /> Account User
-              </button>
-              <button type="button" className="btn btn-outline btn-sm" onClick={() => quickFill('van1', 'Van@123')}>
-                <Truck size={14} color="#d97706" /> Van 1 Driver
-              </button>
-            </div>
-          </div>
         </form>
       </div>
     </div>
