@@ -16,6 +16,8 @@ export async function apiRequest(path, options = {}) {
   const token = getStoredToken();
   const headers = {
     'Content-Type': 'application/json',
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
     ...(options.headers || {}),
   };
   if (token) {
@@ -23,6 +25,7 @@ export async function apiRequest(path, options = {}) {
   }
 
   const res = await fetch(path, {
+    cache: 'no-store',
     ...options,
     headers,
   });
@@ -37,7 +40,10 @@ export async function apiRequest(path, options = {}) {
 }
 
 export const api = {
-  get: (path) => apiRequest(path, { method: 'GET' }),
+  get: (path) => {
+    const sep = path.includes('?') ? '&' : '?';
+    return apiRequest(`${path}${sep}_t=${Date.now()}`, { method: 'GET' });
+  },
   post: (path, body) => apiRequest(path, { method: 'POST', body: JSON.stringify(body) }),
   put: (path, body) => apiRequest(path, { method: 'PUT', body: JSON.stringify(body) }),
 };
