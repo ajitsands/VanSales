@@ -6,17 +6,25 @@
 
 $host = getenv('DB_HOST') ?: '127.0.0.1';
 $port = getenv('DB_PORT') ?: '3306';
+$dbname = getenv('DB_NAME') ?: 'van_sales_db';
 $user = getenv('DB_USER') ?: 'root';
 $pass = getenv('DB_PASS') !== false ? getenv('DB_PASS') : 'S@nds1@b';
 
 try {
-    $pdo = new PDO("mysql:host={$host};port={$port};charset=utf8mb4", $user, $pass, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-    ]);
-
     $schemaSql = file_get_contents(__DIR__ . '/schema.sql');
-    $pdo->exec($schemaSql);
-    $pdo->exec("USE van_sales_db");
+    if (getenv('DB_NAME')) {
+        $pdo = new PDO("mysql:host={$host};port={$port};dbname={$dbname};charset=utf8mb4", $user, $pass, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        ]);
+        $schemaSql = preg_replace('/^\s*(CREATE DATABASE|USE)\b.*?;\s*$/mi', '', $schemaSql);
+        $pdo->exec($schemaSql);
+    } else {
+        $pdo = new PDO("mysql:host={$host};port={$port};charset=utf8mb4", $user, $pass, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        ]);
+        $pdo->exec($schemaSql);
+        $pdo->exec("USE `{$dbname}`");
+    }
 
     // Check if already seeded
     $count = (int)$pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();

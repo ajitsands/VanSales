@@ -1,10 +1,11 @@
 <?php
 $host = getenv('DB_HOST') ?: '127.0.0.1';
 $port = getenv('DB_PORT') ?: '3306';
+$dbname = getenv('DB_NAME') ?: 'van_sales_db';
 $user = getenv('DB_USER') ?: 'root';
 $pass = getenv('DB_PASS') !== false ? getenv('DB_PASS') : 'S@nds1@b';
 
-$pdo = new PDO("mysql:host={$host};port={$port};dbname=van_sales_db;charset=utf8mb4", $user, $pass, [
+$pdo = new PDO("mysql:host={$host};port={$port};dbname={$dbname};charset=utf8mb4", $user, $pass, [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
 ]);
 
