@@ -213,13 +213,29 @@ export default function VanDriverMobileApp() {
     loadVanDash(f, t);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 10000);
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === 'visible') {
+        load();
+      }
+    };
+    window.addEventListener('focus', onFocusOrVisible);
+    document.addEventListener('visibilitychange', onFocusOrVisible);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', onFocusOrVisible);
+      document.removeEventListener('visibilitychange', onFocusOrVisible);
+    };
+  }, []);
 
   const switchTab = (t) => {
     setActiveTab(t);
     setDrawerOpen(false);
     setMsg('');
     setErr('');
+    load();
   };
 
   const handleOpenShift = async () => {
@@ -2245,7 +2261,7 @@ export default function VanDriverMobileApp() {
                                     {isSent ? `Sent → ${t.to_van_name}` : `Received ← ${t.from_van_name}`}
                                   </span>
                                   <span className={`badge ${t.status === 'completed' ? 'badge-emerald' : t.status === 'cancelled' ? 'badge-rose' : 'badge-blue'}`} style={{ fontSize: 10 }}>
-                                    {t.status === 'completed' ? 'Completed' : t.status === 'cancelled' ? 'Cancelled' : `Pending (OTP ${t.otp_code})`}
+                                    {t.status === 'completed' ? 'Accepted' : t.status === 'cancelled' ? 'Cancelled' : `Pending (OTP ${t.otp_code})`}
                                   </span>
                                 </div>
                               </div>
